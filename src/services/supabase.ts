@@ -12,6 +12,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 export interface User {
   id: string;
   email: string;
+  display_name: string | null;
   virtual_balance: number;
   created_at: string;
   updated_at: string;
@@ -21,8 +22,9 @@ export interface Portfolio {
   id: string;
   user_id: string;
   symbol: string;
-  quantity: number;
+  quantity: number;           // negative = short position
   average_cost_basis: number;
+  short_entry_price: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -31,7 +33,7 @@ export interface Transaction {
   id: string;
   user_id: string;
   symbol: string;
-  type: 'buy' | 'sell';
+  type: 'buy' | 'sell' | 'dividend';
   quantity: number;
   price: number;
   total_cost: number;
@@ -42,14 +44,22 @@ export interface Order {
   id: string;
   user_id: string;
   symbol: string;
-  type: 'market' | 'limit' | 'stop_loss' | 'stop_loss_limit';
+  type: 'market' | 'limit' | 'stop_loss' | 'stop_loss_limit' | 'take_profit';
   side: 'buy' | 'sell';
   quantity: number;
   price: number;
   stop_price?: number;
+  bracket_id?: string;
   status: 'pending' | 'filled' | 'cancelled';
   created_at: string;
   filled_at?: string;
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  display_name: string | null;
+  virtual_balance: number;
+  portfolios: { symbol: string; quantity: number; short_entry_price: number | null }[];
 }
 
 export interface WatchlistItem {
@@ -59,7 +69,7 @@ export interface WatchlistItem {
   created_at: string;
 }
 
-export async function signUp(email: string, password: string): Promise<{ user: User | null; error: string | null }> {
+export async function signUp(email: string, password: string, displayName?: string): Promise<{ user: User | null; error: string | null }> {
   try {
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -77,6 +87,7 @@ export async function signUp(email: string, password: string): Promise<{ user: U
           {
             id: data.user.id,
             email,
+            display_name: displayName ?? email.split('@')[0],
             password_hash: 'handled_by_auth',
             virtual_balance: 100000,
           },
@@ -275,27 +286,27 @@ export async function getTransactions(userId: string): Promise<Transaction[]> {
 export async function createOrder(
   userId: string,
   symbol: string,
-  type: 'market' | 'limit' | 'stop_loss' | 'stop_loss_limit',
+  type: Order['type'],
   side: 'buy' | 'sell',
   quantity: number,
   price: number,
-  stopPrice?: number
+  stopPrice?: number,
+  bracketId?: string
 ): Promise<Order | null> {
   try {
     const { data, error } = await supabase
       .from('orders')
-      .insert([
-        {
-          user_id: userId,
-          symbol,
-          type,
-          side,
-          quantity,
-          price,
-          stop_price: stopPrice,
-          status: 'pending',
-        },
-      ])
+      .insert([{
+        user_id: userId,
+        symbol,
+        type,
+        side,
+        quantity,
+        price,
+        stop_price: stopPrice,
+        bracket_id: bracketId,
+        status: 'pending',
+      }])
       .select()
       .maybeSingle();
 
@@ -303,7 +314,6 @@ export async function createOrder(
       console.error('Error creating order:', error);
       return null;
     }
-
     return data;
   } catch (err) {
     console.error('Error creating order:', err);
@@ -432,4 +442,87 @@ export async function removeFromWatchlist(userId: string, symbol: string): Promi
     console.error('Error removing from watchlist:', err);
     return false;
   }
+}
+
+// Cancel all pending orders in the same bracket except the one that just filled
+export async function cancelBracketSiblings(bracketId: string, filledOrderId: string): Promise<void> {
+  const { error } = await supabase
+    .from('orders')
+    .update({ status: 'cancelled' })
+    .eq('bracket_id', bracketId)
+    .eq('status', 'pending')
+    .neq('id', filledOrderId);
+  if (error) console.error('Error cancelling bracket siblings:', error);
+}
+
+// Upsert a short position with short_entry_price tracking
+export async function updatePortfolioShort(
+  userId: string,
+  symbol: string,
+  quantity: number,
+  shortEntryPrice: number
+): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('portfolios')
+      .upsert(
+        {
+          user_id: userId,
+          symbol,
+          quantity,
+          average_cost_basis: 0,
+          short_entry_price: shortEntryPrice,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,symbol' }
+      );
+    if (error) { console.error('Error updating short portfolio:', error); return false; }
+    return true;
+  } catch (err) {
+    console.error('Error updating short portfolio:', err);
+    return false;
+  }
+}
+
+// Fetch top 100 users with their portfolios for leaderboard computation
+export async function getLeaderboardData(): Promise<LeaderboardEntry[]> {
+  try {
+    const { data: users, error: usersError } = await supabase
+      .from('users')
+      .select('id, display_name, virtual_balance')
+      .order('virtual_balance', { ascending: false })
+      .limit(100);
+
+    if (usersError || !users) return [];
+
+    const userIds = users.map((u: { id: string }) => u.id);
+    const { data: portfolios, error: portError } = await supabase
+      .from('portfolios')
+      .select('user_id, symbol, quantity, short_entry_price')
+      .in('user_id', userIds);
+
+    if (portError) return [];
+
+    return users.map((u: { id: string; display_name: string | null; virtual_balance: number }) => ({
+      ...u,
+      portfolios: (portfolios ?? [])
+        .filter((p: { user_id: string }) => p.user_id === u.id)
+        .map((p: { symbol: string; quantity: number; short_entry_price: number | null }) => ({
+          symbol: p.symbol,
+          quantity: p.quantity,
+          short_entry_price: p.short_entry_price,
+        })),
+    }));
+  } catch (err) {
+    console.error('Error fetching leaderboard:', err);
+    return [];
+  }
+}
+
+export async function updateDisplayName(userId: string, displayName: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('users')
+    .update({ display_name: displayName, updated_at: new Date().toISOString() })
+    .eq('id', userId);
+  return !error;
 }
