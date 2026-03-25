@@ -33,15 +33,17 @@ Where:
 - `μ` = drift (annualized, per-stock, e.g. AAPL ~0.25, TSLA ~0.40)
 - `σ` = volatility (annualized, e.g. AAPL ~0.28, TSLA ~0.55)
 - `Z` = standard normal random variable (Box-Muller from seeded RNG)
-- `dt` = time step (1 candle / trading-days-per-year)
+- `dt` = time step (`1 / (252 × candlesPerDay)` — 252 trading days/year is the US equity standard; daily candles use `dt = 1/252`, hourly use `dt = 1/(252×6.5)`, etc.)
 
-**Volatility clustering (GARCH-lite):** Each stock tracks a rolling `currentVol` that reverts toward `baseVol` each step:
+**Volatility clustering (GARCH-lite):** Each stock tracks a rolling `currentVol` that reverts toward `baseVol` each step using a mean-reverting update where coefficients sum to 1:
 
 ```
-currentVol = baseVol + 0.85 · (currentVol - baseVol) + 0.15 · |Z| · baseVol
+currentVol = α · baseVol + β · currentVol + γ · |Z| · baseVol
+// where α = 0.05, β = 0.90, γ = 0.05
+// α + β = 0.95 guarantees mean-reversion; γ adds proportional shock
 ```
 
-This produces calm periods punctuated by volatile bursts — realistic without full GARCH implementation.
+`currentVol` is initialised to `baseVol`. The shock term (`γ · |Z| · baseVol`) is bounded: `currentVol` is clamped to `[0.5 × baseVol, 3 × baseVol]` after each step to prevent runaway volatility on extreme Z draws. This produces calm periods punctuated by volatile bursts — realistic without full GARCH implementation.
 
 **Seeding:** Each stock gets a deterministic seed derived from `symbol + timeframe`. Same seed → same price history on reload. Seeds advance deterministically per candle so history is stable but new candles extend naturally.
 
@@ -64,7 +66,7 @@ This produces calm periods punctuated by volatile bursts — realistic without f
 
 ### Dividends
 
-Four stocks pay quarterly dividends: AAPL (0.5% quarterly), MSFT (0.7%), JPM (0.9%), AMZN (0.0%). Dividend payouts are computed on each price tick cycle using `holdings × price × (yield / 91.25 / ticksPerDay)` and written as `type: 'dividend'` transactions. No new DB table needed.
+Three stocks pay quarterly dividends: AAPL (0.5% quarterly), MSFT (0.7%), JPM (0.9%). Dividend payouts are computed on each price tick cycle using `holdings × price × (yield / 91.25 / ticksPerDay)` and written as `type: 'dividend'` transactions. No new DB table needed.
 
 ---
 
@@ -138,12 +140,28 @@ In `tradingEngine.ts → checkAndExecutePendingOrders`:
 
 ### Bracket orders
 
-When user submits a buy with both TP and SL set, `placeOrder` is called three times:
-1. Market buy (executes immediately)
-2. `take_profit` sell at TP price (pending)
-3. `stop_loss` sell at SL price (pending)
+**Schema addition:** Add `bracket_id uuid` column to the `orders` table (nullable). This links the two contingent legs of a bracket.
 
-When either fills, the other is auto-cancelled (handled in `executeOrder` after fill).
+When user submits a buy with both TP and SL set, the flow is:
+1. Execute the market buy immediately via `executeBuyOrder`. If this fails, abort — do not place legs 2 or 3.
+2. Generate a shared `bracketId = uuid()`.
+3. Insert a `take_profit` sell order with `bracket_id = bracketId` (status: pending).
+4. Insert a `stop_loss` sell order with `bracket_id = bracketId` (status: pending).
+
+**Cancellation on fill:** In `executeOrder`, after a successful fill, if `order.bracket_id` is set, cancel all other pending orders sharing the same `bracket_id`:
+
+```ts
+if (order.bracket_id) {
+  await supabase
+    .from('orders')
+    .update({ status: 'cancelled' })
+    .eq('bracket_id', order.bracket_id)
+    .eq('status', 'pending')
+    .neq('id', order.id);
+}
+```
+
+This ensures the sibling leg is cancelled regardless of which fires first. The `bracket_id` column is also added to the `Order` type in `supabase.ts`.
 
 ---
 
@@ -165,7 +183,15 @@ When user buys back a shorted stock, if they own negative quantity, the buy redu
 
 ### Schema change
 
-`portfolios.quantity` is already a numeric type — negative values work without migration. Add `portfolios.short_entry_price numeric` column to track the entry price of the short position for P/L calculation.
+`portfolios.quantity` is already a numeric type — negative values work without migration. Add `portfolios.short_entry_price numeric` column to track the VWAP entry price of the short position.
+
+**VWAP averaging for incremental shorts:** When adding to an existing short position, compute the new average entry price using:
+```
+newShortEntryPrice = (existingQty × existingEntryPrice + newQty × currentPrice) / (existingQty + newQty)
+```
+where quantities are treated as positive magnitudes for this calculation.
+
+**Cover mechanics:** On cover (buy back), P/L = `(short_entry_price − cover_price) × coveredQty`. The collateral returned = `coveredQty × short_entry_price × 1.5`, and the net credit to `virtual_balance` = `returned_collateral + P/L`. If the short is fully covered (`quantity` reaches 0), the portfolio row is deleted. Partial covers reduce `quantity` (less negative), do not change `short_entry_price`, and credit only `coveredQty × short_entry_price × 1.5 + P/L` to `virtual_balance` — the remaining collateral for the still-open short portion stays locked.
 
 ### UI
 
@@ -173,7 +199,7 @@ On Dashboard holdings list, short positions display in red with a "SHORT" badge 
 
 ### Collateral warning
 
-If `current_price > short_entry_price × 1.5` (50% adverse move), a warning banner appears: "Short position at risk — consider covering." No forced liquidation in this version.
+If `current_price > short_entry_price × 1.25` (25% adverse move — 83% of collateral consumed), a warning banner appears: "Short position at risk — consider covering." This fires early enough to give the user time to act. At `1.5×` the position is already insolvent; the warning is intentionally an early alert, not a liquidation trigger. No forced liquidation in this version.
 
 ---
 
@@ -183,25 +209,24 @@ If `current_price > short_entry_price × 1.5` (50% adverse move), a warning bann
 
 ### Data
 
-Leaderboard query (runs on Supabase):
+The leaderboard data is fetched in two queries and computed client-side (prices are simulated, not stored in DB):
 
-```sql
-SELECT
-  u.id,
-  u.display_name,
-  u.virtual_balance,
-  COALESCE(SUM(p.quantity * <current_price_placeholder>), 0) AS holdings_value,
-  u.virtual_balance + COALESCE(SUM(p.quantity * <current_price_placeholder>), 0) AS total_value
-FROM users u
-LEFT JOIN portfolios p ON p.user_id = u.id
-GROUP BY u.id
-ORDER BY total_value DESC
-LIMIT 100;
+1. `SELECT id, display_name, virtual_balance FROM users LIMIT 100` (ordered by `virtual_balance DESC` as a rough pre-sort before equity computation)
+2. `SELECT user_id, symbol, quantity, short_entry_price FROM portfolios WHERE user_id IN (<ids>)`
+
+The client then computes `totalEquity` per user using the formula in the equity section below and re-sorts. The leaderboard renders the final sorted list.
+
+**Total equity formula (per user):**
+```
+equity = virtual_balance
+       + Σ (long positions:  quantity × currentPrice)
+       + Σ (short positions: |quantity| × short_entry_price × 1.5   // collateral held
+                            + (short_entry_price − currentPrice) × |quantity|)  // unrealized P/L
 ```
 
-Since current prices are client-side (simulated, not in DB), the leaderboard calculates total value client-side: fetch all users' `virtual_balance` + portfolio rows, then multiply by `getCurrentPrice(symbol)` in the browser.
+This correctly accounts for the fact that `virtual_balance` for a short-seller has been reduced by collateral — their true equity includes that collateral plus/minus unrealized P/L on the short.
 
-**Privacy note:** Only `display_name`, `virtual_balance`, and portfolio holdings (symbol + quantity, no cost basis) are exposed to the leaderboard query. Email is never returned.
+**Privacy:** Only `display_name`, `virtual_balance`, and portfolio holdings (symbol, quantity, short_entry_price — no long cost basis) are fetched. Email is never returned.
 
 ### Schema change
 
@@ -233,7 +258,7 @@ Add "Leaderboard" tab to the nav bar in `App.tsx`. Available to authenticated us
 | `src/pages/AuthPage.tsx` | Add display_name field to signup form |
 | `src/pages/LeaderboardPage.tsx` | New file |
 | `src/App.tsx` | Add Leaderboard nav, pass currentPage to chart |
-| `supabase/migrations/YYYYMMDD_features_v2.sql` | Add display_name, short_entry_price, take_profit order type |
+| `supabase/migrations/20260325000000_features_v2.sql` | Add display_name, short_entry_price, bracket_id to orders, take_profit order type. Follow Supabase migration naming: `YYYYMMDDHHmmss_<name>.sql`. |
 | `package.json` | Add lightweight-charts |
 | `CLAUDE.md` | Update commands for bun |
 
