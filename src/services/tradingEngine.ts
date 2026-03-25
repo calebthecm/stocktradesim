@@ -1,13 +1,17 @@
-import { getCurrentPrice } from './marketSimulation';
+import { v4 as uuidv4 } from 'uuid';
+import { getCurrentPrice, getDividendYield } from './marketSimulation';
 import {
   createTransaction,
   updatePortfolio,
+  updatePortfolioShort,
   updateUserBalance,
   getPortfolios,
   createOrder,
   getOrders,
+  cancelBracketSiblings,
   User,
   Order,
+  Portfolio,
 } from './supabase';
 
 export interface TradeResult {
@@ -202,6 +206,9 @@ export async function checkAndExecutePendingOrders(user: User): Promise<void> {
       if (currentPrice <= order.stop_price! && currentPrice <= order.price) {
         shouldExecute = true;
       }
+    } else if (order.type === 'take_profit') {
+      if (order.side === 'sell' && currentPrice >= order.price) shouldExecute = true;
+      if (order.side === 'buy'  && currentPrice <= order.price) shouldExecute = true;
     }
 
     if (shouldExecute) {
@@ -228,7 +235,185 @@ async function executeOrder(order: Order, user: User, executionPrice: number): P
     if (error) {
       console.error('Error updating order status:', error);
     }
+
+    // Cancel sibling legs of a bracket order
+    if (order.bracket_id) {
+      await cancelBracketSiblings(order.bracket_id, order.id);
+    }
   }
 }
 
 import { supabase } from './supabase';
+
+// Place a market buy + optional take profit + stop loss bracket
+export async function placeBracketOrder(
+  user: User,
+  symbol: string,
+  quantity: number,
+  takeProfitPrice: number | null,
+  stopLossPrice: number | null
+): Promise<TradeResult> {
+  const currentPrice = getCurrentPrice(symbol);
+
+  const buyResult = await executeBuyOrder(user, symbol, quantity, currentPrice);
+  if (!buyResult.success) return buyResult;
+
+  if (takeProfitPrice === null && stopLossPrice === null) return buyResult;
+
+  const bracketId = uuidv4();
+
+  if (takeProfitPrice !== null) {
+    await createOrder(user.id, symbol, 'take_profit', 'sell', quantity, takeProfitPrice, undefined, bracketId);
+  }
+  if (stopLossPrice !== null) {
+    await createOrder(user.id, symbol, 'stop_loss', 'sell', quantity, stopLossPrice, stopLossPrice, bracketId);
+  }
+
+  return {
+    ...buyResult,
+    message: `Bought ${quantity} ${symbol} at $${currentPrice}` +
+      (takeProfitPrice ? ` · TP $${takeProfitPrice}` : '') +
+      (stopLossPrice   ? ` · SL $${stopLossPrice}`   : ''),
+  };
+}
+
+export async function validateShortOrder(user: User, symbol: string, quantity: number): Promise<string | null> {
+  if (quantity <= 0) return 'Quantity must be greater than 0';
+
+  const currentPrice = getCurrentPrice(symbol);
+  if (currentPrice <= 0) return 'Invalid stock symbol';
+
+  const requiredCollateral = quantity * currentPrice * 1.5;
+  if (user.virtual_balance < requiredCollateral) {
+    return `Insufficient collateral. Need $${requiredCollateral.toFixed(2)} (150% of position value), have $${user.virtual_balance.toFixed(2)}`;
+  }
+  return null;
+}
+
+export async function executeShortOrder(
+  user: User,
+  symbol: string,
+  quantity: number,
+): Promise<TradeResult> {
+  const currentPrice = getCurrentPrice(symbol);
+  if (currentPrice <= 0) return { success: false, message: 'Invalid stock symbol' };
+
+  const validation = await validateShortOrder(user, symbol, quantity);
+  if (validation) return { success: false, message: validation };
+
+  const collateral = quantity * currentPrice * 1.5;
+  const newBalance = user.virtual_balance - collateral;
+
+  const portfolios = await getPortfolios(user.id);
+  const existing = portfolios.find((p) => p.symbol === symbol);
+
+  let newQty: number;
+  let newEntryPrice: number;
+
+  if (existing && existing.quantity < 0) {
+    // VWAP for existing short position
+    const existingAbs = Math.abs(existing.quantity);
+    newQty = existing.quantity - quantity;
+    newEntryPrice = (existingAbs * (existing.short_entry_price ?? currentPrice) + quantity * currentPrice)
+                    / (existingAbs + quantity);
+  } else {
+    newQty = -(quantity);
+    newEntryPrice = currentPrice;
+  }
+
+  const transaction = await createTransaction(user.id, symbol, 'sell', quantity, currentPrice);
+  if (!transaction) return { success: false, message: 'Failed to create transaction' };
+
+  const ok = await updatePortfolioShort(user.id, symbol, newQty, newEntryPrice);
+  if (!ok) return { success: false, message: 'Failed to update portfolio' };
+
+  const balOk = await updateUserBalance(user.id, newBalance);
+  if (!balOk) return { success: false, message: 'Failed to update balance' };
+
+  return {
+    success: true,
+    message: `Shorted ${quantity} shares of ${symbol} at $${currentPrice} · collateral held: $${collateral.toFixed(2)}`,
+    newBalance,
+    newQuantity: newQty,
+  };
+}
+
+export async function executeCoverOrder(
+  user: User,
+  symbol: string,
+  quantity: number,
+): Promise<TradeResult> {
+  const currentPrice = getCurrentPrice(symbol);
+  if (currentPrice <= 0) return { success: false, message: 'Invalid stock symbol' };
+
+  const portfolios = await getPortfolios(user.id);
+  const position = portfolios.find((p) => p.symbol === symbol);
+
+  if (!position || position.quantity >= 0) {
+    return { success: false, message: `No short position in ${symbol} to cover` };
+  }
+
+  const shortQty = Math.abs(position.quantity);
+  if (quantity > shortQty) {
+    return { success: false, message: `Can only cover up to ${shortQty} shares` };
+  }
+
+  const entryPrice = position.short_entry_price ?? currentPrice;
+  const pnl = (entryPrice - currentPrice) * quantity;
+  const collateralReturned = quantity * entryPrice * 1.5;
+  const creditToBalance = collateralReturned + pnl;
+  const newBalance = user.virtual_balance + creditToBalance;
+
+  const transaction = await createTransaction(user.id, symbol, 'buy', quantity, currentPrice);
+  if (!transaction) return { success: false, message: 'Failed to create transaction' };
+
+  const remaining = position.quantity + quantity; // less negative or 0
+
+  if (remaining === 0) {
+    const { error } = await supabase.from('portfolios').delete().eq('id', position.id);
+    if (error) return { success: false, message: 'Failed to close short position' };
+  } else {
+    const ok = await updatePortfolioShort(user.id, symbol, remaining, entryPrice);
+    if (!ok) return { success: false, message: 'Failed to update portfolio' };
+  }
+
+  const balOk = await updateUserBalance(user.id, newBalance);
+  if (!balOk) return { success: false, message: 'Failed to update balance' };
+
+  return {
+    success: true,
+    message: `Covered ${quantity} shares of ${symbol} · P/L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`,
+    newBalance,
+    newQuantity: remaining,
+  };
+}
+
+const TICKS_PER_DAY = 86400;
+// Trading days per year: 252 (used to derive DAYS_PER_QUARTER below)
+const DAYS_PER_QUARTER = 91.25; // 365 / 4
+
+export async function creditDividends(user: User, portfolios: Portfolio[]): Promise<void> {
+  // Accumulate total dividends first, then make a single balance update.
+  // Writing inside the loop would overwrite with a stale base balance each iteration.
+  let totalDividend = 0;
+
+  for (const position of portfolios) {
+    if (position.quantity <= 0) continue;
+
+    const yieldPerQuarter = getDividendYield(position.symbol);
+    if (yieldPerQuarter === 0) continue;
+
+    const currentPrice = getCurrentPrice(position.symbol);
+    const yieldPerTick = yieldPerQuarter / (DAYS_PER_QUARTER * TICKS_PER_DAY);
+    const dividend = position.quantity * currentPrice * yieldPerTick;
+
+    if (dividend < 0.0001) continue;
+
+    totalDividend += dividend;
+    await createTransaction(user.id, position.symbol, 'dividend' as any, position.quantity, dividend / position.quantity);
+  }
+
+  if (totalDividend > 0) {
+    await updateUserBalance(user.id, user.virtual_balance + totalDividend);
+  }
+}
