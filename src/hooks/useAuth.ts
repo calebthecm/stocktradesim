@@ -1,33 +1,51 @@
 import { useState, useEffect } from 'react';
 import { User } from '../services/supabase';
-import { getCurrentUser } from '../services/supabase';
 import { supabase } from '../services/supabase';
+
+async function fetchUserRow(userId: string): Promise<User | null> {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) return null;
+  return data;
+}
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const getInitialUser = async () => {
-      const currentUser = await getCurrentUser();
-      setUser(currentUser);
-      setIsLoading(false);
-    };
+    let mounted = true;
 
-    getInitialUser();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session) {
-        const currentUser = await getCurrentUser();
-        setUser(currentUser);
-      } else {
-        setUser(null);
+    // getSession() reads from localStorage — never hangs on a network call.
+    // This resolves immediately and unblocks the UI.
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!mounted) return;
+      if (session?.user) {
+        const row = await fetchUserRow(session.user.id);
+        if (mounted) setUser(row);
       }
-      setIsLoading(false);
+      if (mounted) setIsLoading(false);
     });
 
+    // onAuthStateChange handles sign-in, sign-out, and token refresh going forward.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        if (!mounted) return;
+        if (session?.user) {
+          const row = await fetchUserRow(session.user.id);
+          if (mounted) setUser(row);
+        } else {
+          if (mounted) setUser(null);
+        }
+      }
+    );
+
     return () => {
-      authListener?.subscription.unsubscribe();
+      mounted = false;
+      subscription.unsubscribe();
     };
   }, []);
 
