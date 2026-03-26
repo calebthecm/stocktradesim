@@ -74,35 +74,22 @@ export async function signUp(email: string, password: string, displayName?: stri
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: { display_name: displayName ?? email.split('@')[0] },
+      },
     });
 
     if (error) {
       return { user: null, error: error.message };
     }
 
-    if (data.user) {
-      const { data: userData, error: insertError } = await supabase
-        .from('users')
-        .insert([
-          {
-            id: data.user.id,
-            email,
-            display_name: displayName ?? email.split('@')[0],
-            password_hash: 'handled_by_auth',
-            virtual_balance: 100000,
-          },
-        ])
-        .select()
-        .maybeSingle();
-
-      if (insertError) {
-        return { user: null, error: insertError.message };
-      }
-
-      return { user: userData, error: null };
+    if (!data.user) {
+      return { user: null, error: 'Unknown error during signup' };
     }
 
-    return { user: null, error: 'Unknown error during signup' };
+    // The DB trigger (handle_new_auth_user) creates the public.users row automatically.
+    // onAuthStateChange in useAuth will fetch the row and set user state.
+    return { user: null, error: null };
   } catch (err) {
     return { user: null, error: String(err) };
   }
