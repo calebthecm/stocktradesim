@@ -186,7 +186,7 @@ export function TradePage({
       <div className="flex flex-1 overflow-hidden">
         <DrawingToolbox activeTool={activeTool} onToolChange={setActiveTool} />
         <div className="flex-1 overflow-hidden">
-          <CandlestickChart symbol={symbol} onTradeIntent={handleTradeIntent} />
+          <CandlestickChart symbol={symbol} activeTool={activeTool} onTradeIntent={handleTradeIntent} />
         </div>
       </div>
 
