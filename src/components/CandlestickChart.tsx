@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   createChart,
   IChartApi,
@@ -12,12 +12,22 @@ import {
 } from 'lightweight-charts';
 import { getCandleHistory, getTimeframeMs } from '../services/marketSimulation';
 import { getSimTimeMs } from '../services/simClock';
+import { onSimEvent, SimEvent } from '../services/newsEngine';
 import { subHours, subWeeks, subMonths } from 'date-fns';
+import { DrawingTool } from './DrawingToolbox';
 
 interface CandlestickChartProps {
   symbol: string;
-  /** When provided, shows entry/TP/SL lines and fires this callback on change */
+  activeTool?: DrawingTool;
   onTradeIntent?: (entry: number, takeProfit: number | null, stopLoss: number | null) => void;
+}
+
+interface DrawnLine {
+  id: string;
+  kind: 'trendline' | 'hline';
+  x1Pct: number; y1: number;
+  x2Pct: number; y2: number;
+  color: string;
 }
 
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo'] as const;
@@ -33,8 +43,11 @@ function getStartTime(tf: string): Date {
   }
 }
 
-export function CandlestickChart({ symbol, onTradeIntent }: CandlestickChartProps) {
+const DRAG_HIT_PX = 8;
+
+export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick', Time> | null>(null);
   const [timeframe, setTimeframe] = useState('1d');
@@ -43,35 +56,39 @@ export function CandlestickChart({ symbol, onTradeIntent }: CandlestickChartProp
   const tpLineRef = useRef<IPriceLine | null>(null);
   const slLineRef = useRef<IPriceLine | null>(null);
 
-  const [entryPrice, setEntryPrice] = useState<number>(0);
+  const [entryPrice, setEntryPrice] = useState(0);
   const [tpPrice, setTpPrice] = useState<number | null>(null);
   const [slPrice, setSlPrice] = useState<number | null>(null);
 
-  // Mount chart once
+  const dragTarget = useRef<'entry' | 'tp' | 'sl' | null>(null);
+
+  const [drawnLines, setDrawnLines] = useState<DrawnLine[]>([]);
+  const drawStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [drawingPreview, setDrawingPreview] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+
+  const [activeEvent, setActiveEvent] = useState<SimEvent | null>(null);
+
+  useEffect(() => {
+    return onSimEvent((evt) => {
+      if (evt.symbol === symbol) {
+        setActiveEvent(evt);
+        setTimeout(() => setActiveEvent(null), 8000);
+      }
+    });
+  }, [symbol]);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
     const chart = createChart(containerRef.current, {
-      layout: {
-        background: { color: '#131722' },
-        textColor: '#d1d4dc',
-      },
-      grid: {
-        vertLines: { color: '#1e2235' },
-        horzLines: { color: '#1e2235' },
-      },
+      layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
+      grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
       crosshair: { mode: 1 },
-      rightPriceScale: { borderColor: '#1e2235' },
-      timeScale: {
-        borderColor: '#1e2235',
-        timeVisible: true,
-        secondsVisible: false,
-      },
-      width: containerRef.current.clientWidth,
-      height: 450,
+      rightPriceScale: { borderColor: '#21262d' },
+      timeScale: { borderColor: '#21262d', timeVisible: true },
     });
 
-    const candleSeries = chart.addSeries(CandlestickSeries, {
+    const series = chart.addSeries(CandlestickSeries, {
       upColor: '#26a69a',
       downColor: '#ef5350',
       borderUpColor: '#26a69a',
@@ -81,12 +98,10 @@ export function CandlestickChart({ symbol, onTradeIntent }: CandlestickChartProp
     });
 
     chartRef.current = chart;
-    seriesRef.current = candleSeries;
+    seriesRef.current = series;
 
     const ro = new ResizeObserver(() => {
-      if (containerRef.current) {
-        chart.applyOptions({ width: containerRef.current.clientWidth });
-      }
+      chart.applyOptions({ width: containerRef.current?.clientWidth ?? 600 });
     });
     ro.observe(containerRef.current);
 
@@ -98,90 +113,199 @@ export function CandlestickChart({ symbol, onTradeIntent }: CandlestickChartProp
     };
   }, []);
 
-  // Load candles when symbol or timeframe changes
   useEffect(() => {
     if (!seriesRef.current) return;
     const tfMs = getTimeframeMs(timeframe);
     const start = getStartTime(timeframe);
-    const candles = getCandleHistory(symbol, start, new Date(getSimTimeMs()), tfMs);
-
+    const end = new Date(getSimTimeMs());
+    const candles = getCandleHistory(symbol, start, end, tfMs);
     const data: CandlestickData[] = candles.map((c) => ({
       time: Math.floor(c.timestamp / 1000) as UTCTimestamp,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
+      open: c.open, high: c.high, low: c.low, close: c.close,
     }));
-
     seriesRef.current.setData(data);
-    chartRef.current?.timeScale().fitContent();
 
-    if (onTradeIntent && data.length > 0) {
+    if (data.length > 0) {
       const last = data[data.length - 1].close as number;
       setEntryPrice(last);
-      setTpPrice(parseFloat((last * 1.03).toFixed(2)));
-      setSlPrice(parseFloat((last * 0.98).toFixed(2)));
     }
-  }, [symbol, timeframe, onTradeIntent]);
+  }, [symbol, timeframe]);
 
-  // Draw/update price lines when prices change
   useEffect(() => {
-    if (!seriesRef.current || !onTradeIntent || entryPrice === 0) return;
     const series = seriesRef.current;
-
-    if (entryLineRef.current) { try { series.removePriceLine(entryLineRef.current); } catch { /* ignore */ } }
-    if (tpLineRef.current)    { try { series.removePriceLine(tpLineRef.current);    } catch { /* ignore */ } }
-    if (slLineRef.current)    { try { series.removePriceLine(slLineRef.current);    } catch { /* ignore */ } }
-
+    if (!series || entryPrice === 0) return;
+    if (entryLineRef.current) {
+      try { series.removePriceLine(entryLineRef.current); } catch { /* ignore */ }
+    }
     entryLineRef.current = series.createPriceLine({
       price: entryPrice,
       color: '#2962ff',
       lineWidth: 2,
       lineStyle: LineStyle.Solid,
       axisLabelVisible: true,
-      title: `ENTRY  $${entryPrice.toFixed(2)}`,
+      title: 'ENTRY',
     });
+  }, [entryPrice]);
 
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    if (tpLineRef.current) {
+      try { series.removePriceLine(tpLineRef.current); } catch { /* ignore */ }
+      tpLineRef.current = null;
+    }
     if (tpPrice !== null) {
-      const pct = (((tpPrice - entryPrice) / entryPrice) * 100).toFixed(1);
       tpLineRef.current = series.createPriceLine({
         price: tpPrice,
         color: '#26a69a',
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `TP  $${tpPrice.toFixed(2)}  +${pct}%`,
+        title: 'TP',
       });
     }
+  }, [tpPrice]);
 
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    if (slLineRef.current) {
+      try { series.removePriceLine(slLineRef.current); } catch { /* ignore */ }
+      slLineRef.current = null;
+    }
     if (slPrice !== null) {
-      const pct = (((slPrice - entryPrice) / entryPrice) * 100).toFixed(1);
       slLineRef.current = series.createPriceLine({
         price: slPrice,
         color: '#ef5350',
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `SL  $${slPrice.toFixed(2)}  ${pct}%`,
+        title: 'SL',
       });
     }
+  }, [slPrice]);
 
-    onTradeIntent(entryPrice, tpPrice, slPrice);
+  // coordinateToPrice and priceToCoordinate live on ISeriesApi, not on the price scale
+  const yToPrice = useCallback((clientY: number): number => {
+    if (!seriesRef.current || !overlayRef.current) return 0;
+    const rect = overlayRef.current.getBoundingClientRect();
+    const y = clientY - rect.top;
+    return seriesRef.current.coordinateToPrice(y) ?? 0;
+  }, []);
+
+  const priceToY = useCallback((price: number): number => {
+    if (!seriesRef.current) return -1000;
+    const coord = seriesRef.current.priceToCoordinate(price);
+    return coord !== null ? coord : -1000;
+  }, []);
+
+  const getDragTarget = useCallback((clientY: number): typeof dragTarget.current => {
+    const entryY = priceToY(entryPrice);
+    const tpY = tpPrice !== null ? priceToY(tpPrice) : -1000;
+    const slY = slPrice !== null ? priceToY(slPrice) : -1000;
+    if (!overlayRef.current) return null;
+    const rect = overlayRef.current.getBoundingClientRect();
+    const y = clientY - rect.top;
+    if (Math.abs(y - tpY) <= DRAG_HIT_PX) return 'tp';
+    if (Math.abs(y - slY) <= DRAG_HIT_PX) return 'sl';
+    if (Math.abs(y - entryY) <= DRAG_HIT_PX) return 'entry';
+    return null;
+  }, [entryPrice, tpPrice, slPrice, priceToY]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (activeTool === 'cursor' || activeTool === 'bracket') {
+      if (dragTarget.current) {
+        const p = yToPrice(e.clientY);
+        if (dragTarget.current === 'entry') setEntryPrice(Math.round(p * 100) / 100);
+        if (dragTarget.current === 'tp') setTpPrice(Math.round(p * 100) / 100);
+        if (dragTarget.current === 'sl') setSlPrice(Math.round(p * 100) / 100);
+        return;
+      }
+      const hit = getDragTarget(e.clientY);
+      if (overlayRef.current) {
+        overlayRef.current.style.cursor = hit ? 'ns-resize' : 'default';
+      }
+    } else if (activeTool === 'trendline' && drawStartRef.current) {
+      if (!overlayRef.current) return;
+      const rect = overlayRef.current.getBoundingClientRect();
+      setDrawingPreview({
+        x1: drawStartRef.current.x,
+        y1: drawStartRef.current.y,
+        x2: e.clientX - rect.left,
+        y2: e.clientY - rect.top,
+      });
+    } else if (activeTool === 'hline') {
+      if (!overlayRef.current) return;
+      const rect = overlayRef.current.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      setDrawingPreview({ x1: 0, y1: y, x2: rect.width, y2: y });
+    }
+  }, [activeTool, getDragTarget, yToPrice]);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (activeTool === 'cursor' || activeTool === 'bracket') {
+      dragTarget.current = getDragTarget(e.clientY);
+    } else if (activeTool === 'trendline') {
+      if (!overlayRef.current) return;
+      const rect = overlayRef.current.getBoundingClientRect();
+      drawStartRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    } else if (activeTool === 'hline') {
+      if (!overlayRef.current) return;
+      const rect = overlayRef.current.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const newLine: DrawnLine = {
+        id: `hline-${Date.now()}`,
+        kind: 'hline',
+        x1Pct: 0, y1: y, x2Pct: 100, y2: y,
+        color: '#f59e0b',
+      };
+      setDrawnLines((prev) => [...prev, newLine]);
+      setDrawingPreview(null);
+    } else if (activeTool === 'eraser') {
+      setDrawnLines([]);
+    }
+  }, [activeTool, getDragTarget]);
+
+  const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    if (dragTarget.current) {
+      onTradeIntent?.(entryPrice, tpPrice, slPrice);
+      dragTarget.current = null;
+    } else if (activeTool === 'trendline' && drawStartRef.current) {
+      if (!overlayRef.current) return;
+      const rect = overlayRef.current.getBoundingClientRect();
+      const x2 = e.clientX - rect.left;
+      const y2 = e.clientY - rect.top;
+      const newLine: DrawnLine = {
+        id: `tl-${Date.now()}`,
+        kind: 'trendline',
+        x1Pct: (drawStartRef.current.x / rect.width) * 100,
+        y1: drawStartRef.current.y,
+        x2Pct: (x2 / rect.width) * 100,
+        y2,
+        color: '#f59e0b',
+      };
+      setDrawnLines((prev) => [...prev, newLine]);
+      drawStartRef.current = null;
+      setDrawingPreview(null);
+    }
+  }, [activeTool, entryPrice, tpPrice, slPrice, onTradeIntent]);
+
+  useEffect(() => {
+    onTradeIntent?.(entryPrice, tpPrice, slPrice);
   }, [entryPrice, tpPrice, slPrice, onTradeIntent]);
 
   return (
-    <div className="w-full bg-[#131722] rounded-lg overflow-hidden">
-      {/* Timeframe selector */}
-      <div className="flex items-center gap-1 px-4 pt-3 pb-2 border-b border-[#1e2235]">
-        <span className="text-[#d1d4dc] font-bold text-sm mr-2">{symbol}</span>
+    <div className="relative flex flex-col h-full">
+      {/* Timeframe buttons */}
+      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-sim-border bg-sim-surface flex-shrink-0">
         {TIMEFRAMES.map((tf) => (
           <button
             key={tf}
             onClick={() => setTimeframe(tf)}
-            className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${
               timeframe === tf
-                ? 'bg-[#2962ff] text-white'
-                : 'text-[#787b86] hover:text-[#d1d4dc]'
+                ? 'bg-sim-blue text-white'
+                : 'text-sim-muted hover:text-sim-text'
             }`}
           >
             {tf}
@@ -189,46 +313,69 @@ export function CandlestickChart({ symbol, onTradeIntent }: CandlestickChartProp
         ))}
       </div>
 
-      {/* Chart canvas */}
-      <div ref={containerRef} className="w-full" />
+      {/* Chart + overlay */}
+      <div className="relative flex-1">
+        <div ref={containerRef} className="absolute inset-0" />
 
-      {/* Trade line controls — only in trade mode */}
-      {onTradeIntent && entryPrice > 0 && (
-        <div className="px-4 py-3 border-t border-[#1e2235] grid grid-cols-3 gap-3">
-          <div>
-            <label className="text-[10px] text-[#2962ff] font-bold uppercase tracking-wide block mb-1">Entry</label>
-            <input
-              type="number"
-              value={entryPrice}
-              step="0.01"
-              onChange={(e) => setEntryPrice(parseFloat(e.target.value) || 0)}
-              className="w-full bg-[#1e2235] text-[#d1d4dc] text-sm px-2 py-1 rounded border border-[#2962ff] outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] text-[#26a69a] font-bold uppercase tracking-wide block mb-1">Take Profit</label>
-            <input
-              type="number"
-              value={tpPrice ?? ''}
-              step="0.01"
-              placeholder="optional"
-              onChange={(e) => setTpPrice(e.target.value ? parseFloat(e.target.value) : null)}
-              className="w-full bg-[#1e2235] text-[#d1d4dc] text-sm px-2 py-1 rounded border border-[#26a69a] outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] text-[#ef5350] font-bold uppercase tracking-wide block mb-1">Stop Loss</label>
-            <input
-              type="number"
-              value={slPrice ?? ''}
-              step="0.01"
-              placeholder="optional"
-              onChange={(e) => setSlPrice(e.target.value ? parseFloat(e.target.value) : null)}
-              className="w-full bg-[#1e2235] text-[#d1d4dc] text-sm px-2 py-1 rounded border border-[#ef5350] outline-none"
-            />
-          </div>
+        {/* Transparent mouse overlay */}
+        <div
+          ref={overlayRef}
+          className="absolute inset-0"
+          style={{ zIndex: 10 }}
+          onMouseMove={handleMouseMove}
+          onMouseDown={handleMouseDown}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={() => { dragTarget.current = null; setDrawingPreview(null); }}
+        >
+          {/* SVG drawing layer */}
+          <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 11 }}>
+            {drawnLines.map((line) => (
+              line.kind === 'trendline' ? (
+                <line
+                  key={line.id}
+                  x1={`${line.x1Pct}%`} y1={line.y1}
+                  x2={`${line.x2Pct}%`} y2={line.y2}
+                  stroke={line.color} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.85"
+                />
+              ) : (
+                <line
+                  key={line.id}
+                  x1="0%" y1={line.y1} x2="100%" y2={line.y2}
+                  stroke={line.color} strokeWidth="1" strokeDasharray="6 4" opacity="0.7"
+                />
+              )
+            ))}
+            {drawingPreview && (
+              <line
+                x1={drawingPreview.x1} y1={drawingPreview.y1}
+                x2={drawingPreview.x2} y2={drawingPreview.y2}
+                stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.6"
+              />
+            )}
+          </svg>
         </div>
-      )}
+
+        {/* News event popup */}
+        {activeEvent && (
+          <div
+            className="absolute bottom-4 left-4 bg-sim-surface border border-sim-amber border-l-[3px] rounded-r-md px-3 py-2 max-w-xs z-20"
+            style={{ borderLeftColor: '#f59e0b' }}
+          >
+            <div className="text-[8px] font-black text-sim-amber uppercase tracking-[1px] mb-1">
+              Sim Event · {activeEvent.symbol}
+            </div>
+            <div className="text-[11px] text-sim-text leading-snug">{activeEvent.headline}</div>
+            <div className={`text-[9px] font-bold mt-1 ${activeEvent.impact >= 0 ? 'text-sim-green' : 'text-sim-red'}`}>
+              {activeEvent.impact >= 0 ? '▲' : '▼'} {Math.abs(activeEvent.impact * 100).toFixed(1)}% price impact
+            </div>
+          </div>
+        )}
+
+        {/* Hint */}
+        <div className="absolute top-2 right-2 bg-sim-bg/80 border border-sim-border rounded px-2 py-1 text-[9px] text-sim-muted z-20">
+          ↕ Drag TP / SL lines · {activeTool !== 'cursor' ? activeTool : 'click to draw'}
+        </div>
+      </div>
     </div>
   );
 }

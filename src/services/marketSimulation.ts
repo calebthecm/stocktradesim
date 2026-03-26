@@ -1,4 +1,5 @@
 import { getSimTimeMs } from './simClock';
+import { getActiveDriftMultiplier } from './newsEngine';
 
 export interface Candle {
   timestamp: number;
@@ -124,8 +125,9 @@ export function getCurrentPrice(symbol: string, now: Date = new Date(getSimTimeM
   const timeframeMs = getTimeframeMs('1d');
   const idx = candleIndexAt(now.getTime(), timeframeMs);
   const history = buildPriceHistory(config, Math.min(idx + 1, 1000), dtForTimeframe(timeframeMs));
-  const price = history[history.length - 1];
-  return Math.round(price * 100) / 100;
+  const base = history[history.length - 1];
+  const drifted = base * getActiveDriftMultiplier(symbol.toUpperCase());
+  return Math.round(drifted * 100) / 100;
 }
 
 export function getCandleHistory(
