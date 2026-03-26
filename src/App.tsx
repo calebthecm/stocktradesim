@@ -3,6 +3,7 @@ import { useAuth } from './hooks/useAuth';
 import { AuthPage } from './pages/AuthPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { TradePage } from './pages/TradePage';
+import { LeaderboardPage } from './pages/LeaderboardPage';
 import { signOut } from './services/supabase';
 
 type Page = 'dashboard' | 'trade' | 'auth' | 'leaderboard';
@@ -82,6 +83,16 @@ function App() {
                 Trade
               </button>
               <button
+                onClick={() => handleNavigate('leaderboard')}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                  currentPage === 'leaderboard'
+                    ? 'bg-blue-600 text-white'
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                Leaderboard
+              </button>
+              <button
                 onClick={handleLogout}
                 className="px-4 py-2 rounded-lg font-medium text-gray-700 hover:bg-gray-100 transition-colors"
               >
@@ -106,6 +117,10 @@ function App() {
           onBack={() => handleNavigate('dashboard')}
           onOrderExecuted={() => handleNavigate('dashboard')}
         />
+      )}
+
+      {currentPage === 'leaderboard' && user && (
+        <LeaderboardPage user={user} />
       )}
     </div>
   );
