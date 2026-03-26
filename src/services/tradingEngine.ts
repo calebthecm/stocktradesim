@@ -410,7 +410,7 @@ export async function creditDividends(user: User, portfolios: Portfolio[]): Prom
     if (dividend < 0.0001) continue;
 
     totalDividend += dividend;
-    await createTransaction(user.id, position.symbol, 'dividend' as any, position.quantity, dividend / position.quantity);
+    await createTransaction(user.id, position.symbol, 'dividend', position.quantity, dividend / position.quantity);
   }
 
   if (totalDividend > 0) {

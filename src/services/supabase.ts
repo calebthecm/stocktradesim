@@ -229,7 +229,7 @@ export async function updatePortfolio(
 export async function createTransaction(
   userId: string,
   symbol: string,
-  type: 'buy' | 'sell',
+  type: 'buy' | 'sell' | 'dividend',
   quantity: number,
   price: number
 ): Promise<Transaction | null> {
