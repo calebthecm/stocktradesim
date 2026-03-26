@@ -1,185 +1,233 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  ComposedChart,
-  Bar,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-} from 'recharts';
-import { getCandleHistory, getTimeframeMs, getTimeframeLabel, Candle } from '../services/marketSimulation';
-import { format, subDays, subHours, subWeeks, subMonths } from 'date-fns';
+  createChart,
+  IChartApi,
+  ISeriesApi,
+  CandlestickData,
+  CandlestickSeries,
+  LineStyle,
+  IPriceLine,
+  UTCTimestamp,
+  Time,
+} from 'lightweight-charts';
+import { getCandleHistory, getTimeframeMs } from '../services/marketSimulation';
+import { subHours, subWeeks, subMonths } from 'date-fns';
 
 interface CandlestickChartProps {
   symbol: string;
-  timeframe?: string;
+  /** When provided, shows entry/TP/SL lines and fires this callback on change */
+  onTradeIntent?: (entry: number, takeProfit: number | null, stopLoss: number | null) => void;
 }
 
-export function CandlestickChart({ symbol, timeframe = '1d' }: CandlestickChartProps) {
-  const [candles, setCandles] = useState<Candle[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [selectedTimeframe, setSelectedTimeframe] = useState(timeframe);
+const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo'] as const;
 
-  useEffect(() => {
-    const loadCandles = async () => {
-      setIsLoading(true);
-      const timeframeMs = getTimeframeMs(selectedTimeframe);
-      const now = new Date();
-      let startTime: Date;
-
-      switch (selectedTimeframe) {
-        case '1m':
-        case '5m':
-        case '15m':
-        case '1h':
-          startTime = subHours(now, 24);
-          break;
-        case '4h':
-        case '1d':
-          startTime = subWeeks(now, 4);
-          break;
-        case '1w':
-          startTime = subMonths(now, 12);
-          break;
-        case '1mo':
-          startTime = subMonths(now, 36);
-          break;
-        default:
-          startTime = subDays(now, 30);
-      }
-
-      const history = getCandleHistory(symbol, startTime, now, timeframeMs);
-      setCandles(history);
-      setIsLoading(false);
-    };
-
-    loadCandles();
-  }, [symbol, selectedTimeframe]);
-
-  if (isLoading) {
-    return <div className="w-full h-96 flex items-center justify-center">Loading chart...</div>;
+function getStartTime(tf: string): Date {
+  const now = new Date();
+  switch (tf) {
+    case '1m': case '5m': case '15m': case '1h': return subHours(now, 24);
+    case '4h': case '1d': return subWeeks(now, 4);
+    case '1w': return subMonths(now, 12);
+    case '1mo': return subMonths(now, 36);
+    default: return subWeeks(now, 4);
   }
+}
 
-  const data = candles.map((candle) => ({
-    timestamp: candle.timestamp,
-    timeStr: format(new Date(candle.timestamp), 'MMM dd, HH:mm'),
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close,
-    volume: candle.volume,
-  }));
+export function CandlestickChart({ symbol, onTradeIntent }: CandlestickChartProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Candlestick', Time> | null>(null);
+  const [timeframe, setTimeframe] = useState('1d');
 
-  const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo'];
+  const entryLineRef = useRef<IPriceLine | null>(null);
+  const tpLineRef = useRef<IPriceLine | null>(null);
+  const slLineRef = useRef<IPriceLine | null>(null);
+
+  const [entryPrice, setEntryPrice] = useState<number>(0);
+  const [tpPrice, setTpPrice] = useState<number | null>(null);
+  const [slPrice, setSlPrice] = useState<number | null>(null);
+
+  // Mount chart once
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const chart = createChart(containerRef.current, {
+      layout: {
+        background: { color: '#131722' },
+        textColor: '#d1d4dc',
+      },
+      grid: {
+        vertLines: { color: '#1e2235' },
+        horzLines: { color: '#1e2235' },
+      },
+      crosshair: { mode: 1 },
+      rightPriceScale: { borderColor: '#1e2235' },
+      timeScale: {
+        borderColor: '#1e2235',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      width: containerRef.current.clientWidth,
+      height: 450,
+    });
+
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderUpColor: '#26a69a',
+      borderDownColor: '#ef5350',
+      wickUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
+    });
+
+    chartRef.current = chart;
+    seriesRef.current = candleSeries;
+
+    const ro = new ResizeObserver(() => {
+      if (containerRef.current) {
+        chart.applyOptions({ width: containerRef.current.clientWidth });
+      }
+    });
+    ro.observe(containerRef.current);
+
+    return () => {
+      ro.disconnect();
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+    };
+  }, []);
+
+  // Load candles when symbol or timeframe changes
+  useEffect(() => {
+    if (!seriesRef.current) return;
+    const tfMs = getTimeframeMs(timeframe);
+    const start = getStartTime(timeframe);
+    const candles = getCandleHistory(symbol, start, new Date(), tfMs);
+
+    const data: CandlestickData[] = candles.map((c) => ({
+      time: Math.floor(c.timestamp / 1000) as UTCTimestamp,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+
+    seriesRef.current.setData(data);
+    chartRef.current?.timeScale().fitContent();
+
+    if (onTradeIntent && data.length > 0) {
+      const last = data[data.length - 1].close as number;
+      setEntryPrice(last);
+      setTpPrice(parseFloat((last * 1.03).toFixed(2)));
+      setSlPrice(parseFloat((last * 0.98).toFixed(2)));
+    }
+  }, [symbol, timeframe, onTradeIntent]);
+
+  // Draw/update price lines when prices change
+  useEffect(() => {
+    if (!seriesRef.current || !onTradeIntent || entryPrice === 0) return;
+    const series = seriesRef.current;
+
+    if (entryLineRef.current) { try { series.removePriceLine(entryLineRef.current); } catch { /* ignore */ } }
+    if (tpLineRef.current)    { try { series.removePriceLine(tpLineRef.current);    } catch { /* ignore */ } }
+    if (slLineRef.current)    { try { series.removePriceLine(slLineRef.current);    } catch { /* ignore */ } }
+
+    entryLineRef.current = series.createPriceLine({
+      price: entryPrice,
+      color: '#2962ff',
+      lineWidth: 2,
+      lineStyle: LineStyle.Solid,
+      axisLabelVisible: true,
+      title: `ENTRY  $${entryPrice.toFixed(2)}`,
+    });
+
+    if (tpPrice !== null) {
+      const pct = (((tpPrice - entryPrice) / entryPrice) * 100).toFixed(1);
+      tpLineRef.current = series.createPriceLine({
+        price: tpPrice,
+        color: '#26a69a',
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `TP  $${tpPrice.toFixed(2)}  +${pct}%`,
+      });
+    }
+
+    if (slPrice !== null) {
+      const pct = (((slPrice - entryPrice) / entryPrice) * 100).toFixed(1);
+      slLineRef.current = series.createPriceLine({
+        price: slPrice,
+        color: '#ef5350',
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `SL  $${slPrice.toFixed(2)}  ${pct}%`,
+      });
+    }
+
+    onTradeIntent(entryPrice, tpPrice, slPrice);
+  }, [entryPrice, tpPrice, slPrice, onTradeIntent]);
 
   return (
-    <div className="w-full bg-white rounded-lg shadow-lg p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-2xl font-bold">{symbol}</h2>
-        <div className="flex gap-2 flex-wrap">
-          {timeframes.map((tf) => (
-            <button
-              key={tf}
-              onClick={() => setSelectedTimeframe(tf)}
-              className={`px-3 py-1 rounded font-medium text-sm transition-colors ${
-                selectedTimeframe === tf
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
-            >
-              {tf}
-            </button>
-          ))}
-        </div>
+    <div className="w-full bg-[#131722] rounded-lg overflow-hidden">
+      {/* Timeframe selector */}
+      <div className="flex items-center gap-1 px-4 pt-3 pb-2 border-b border-[#1e2235]">
+        <span className="text-[#d1d4dc] font-bold text-sm mr-2">{symbol}</span>
+        {TIMEFRAMES.map((tf) => (
+          <button
+            key={tf}
+            onClick={() => setTimeframe(tf)}
+            className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+              timeframe === tf
+                ? 'bg-[#2962ff] text-white'
+                : 'text-[#787b86] hover:text-[#d1d4dc]'
+            }`}
+          >
+            {tf}
+          </button>
+        ))}
       </div>
 
-      <ResponsiveContainer width="100%" height={400}>
-        <ComposedChart
-          data={data}
-          margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
-        >
-          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-          <XAxis
-            dataKey="timeStr"
-            tick={{ fontSize: 12 }}
-            interval={Math.floor(data.length / 10)}
-          />
-          <YAxis yAxisId="left" tick={{ fontSize: 12 }} />
-          <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} />
-          <Tooltip
-            contentStyle={{ backgroundColor: '#f9fafb', border: '1px solid #e5e7eb' }}
-            formatter={(value: number) => value.toFixed(2)}
-            labelFormatter={(label) => `Time: ${label}`}
-          />
-          <Bar yAxisId="right" dataKey="volume" fill="#d1d5db" opacity={0.3} />
-          <Line
-            yAxisId="left"
-            type="monotone"
-            dataKey="open"
-            stroke="#3b82f6"
-            dot={false}
-            strokeWidth={1}
-            isAnimationActive={false}
-          />
-          <Line
-            yAxisId="left"
-            type="monotone"
-            dataKey="high"
-            stroke="#10b981"
-            dot={false}
-            strokeWidth={1}
-            isAnimationActive={false}
-          />
-          <Line
-            yAxisId="left"
-            type="monotone"
-            dataKey="low"
-            stroke="#ef4444"
-            dot={false}
-            strokeWidth={1}
-            isAnimationActive={false}
-          />
-          <Line
-            yAxisId="left"
-            type="monotone"
-            dataKey="close"
-            stroke="#8b5cf6"
-            dot={false}
-            strokeWidth={2}
-            isAnimationActive={false}
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
+      {/* Chart canvas */}
+      <div ref={containerRef} className="w-full" />
 
-      <div className="mt-4 grid grid-cols-4 gap-4">
-        <div className="bg-gray-50 p-3 rounded">
-          <p className="text-xs text-gray-600">Open</p>
-          <p className="text-lg font-semibold text-blue-600">
-            ${data[data.length - 1]?.open.toFixed(2) || '-'}
-          </p>
+      {/* Trade line controls — only in trade mode */}
+      {onTradeIntent && entryPrice > 0 && (
+        <div className="px-4 py-3 border-t border-[#1e2235] grid grid-cols-3 gap-3">
+          <div>
+            <label className="text-[10px] text-[#2962ff] font-bold uppercase tracking-wide block mb-1">Entry</label>
+            <input
+              type="number"
+              value={entryPrice}
+              step="0.01"
+              onChange={(e) => setEntryPrice(parseFloat(e.target.value) || 0)}
+              className="w-full bg-[#1e2235] text-[#d1d4dc] text-sm px-2 py-1 rounded border border-[#2962ff] outline-none"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-[#26a69a] font-bold uppercase tracking-wide block mb-1">Take Profit</label>
+            <input
+              type="number"
+              value={tpPrice ?? ''}
+              step="0.01"
+              placeholder="optional"
+              onChange={(e) => setTpPrice(e.target.value ? parseFloat(e.target.value) : null)}
+              className="w-full bg-[#1e2235] text-[#d1d4dc] text-sm px-2 py-1 rounded border border-[#26a69a] outline-none"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-[#ef5350] font-bold uppercase tracking-wide block mb-1">Stop Loss</label>
+            <input
+              type="number"
+              value={slPrice ?? ''}
+              step="0.01"
+              placeholder="optional"
+              onChange={(e) => setSlPrice(e.target.value ? parseFloat(e.target.value) : null)}
+              className="w-full bg-[#1e2235] text-[#d1d4dc] text-sm px-2 py-1 rounded border border-[#ef5350] outline-none"
+            />
+          </div>
         </div>
-        <div className="bg-gray-50 p-3 rounded">
-          <p className="text-xs text-gray-600">High</p>
-          <p className="text-lg font-semibold text-green-600">
-            ${data[data.length - 1]?.high.toFixed(2) || '-'}
-          </p>
-        </div>
-        <div className="bg-gray-50 p-3 rounded">
-          <p className="text-xs text-gray-600">Low</p>
-          <p className="text-lg font-semibold text-red-600">
-            ${data[data.length - 1]?.low.toFixed(2) || '-'}
-          </p>
-        </div>
-        <div className="bg-gray-50 p-3 rounded">
-          <p className="text-xs text-gray-600">Close</p>
-          <p className="text-lg font-semibold text-purple-600">
-            ${data[data.length - 1]?.close.toFixed(2) || '-'}
-          </p>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -121,7 +121,7 @@ export function TradePage({ user, initialSymbol = 'AAPL', onBack, onOrderExecute
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2">
-            <CandlestickChart symbol={symbol} timeframe="1d" />
+            <CandlestickChart symbol={symbol} />
           </div>
 
           <div className="bg-white rounded-lg shadow p-6">

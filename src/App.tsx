@@ -5,7 +5,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { TradePage } from './pages/TradePage';
 import { signOut } from './services/supabase';
 
-type Page = 'dashboard' | 'trade' | 'auth';
+type Page = 'dashboard' | 'trade' | 'auth' | 'leaderboard';
 
 function App() {
   const { user, isLoading } = useAuth();
@@ -18,8 +18,8 @@ function App() {
     }
   }, [user, isLoading]);
 
-  const handleNavigate = (page: Page, params?: Record<string, any>) => {
-    setCurrentPage(page);
+  const handleNavigate = (page: string, params?: Record<string, any>) => {
+    setCurrentPage(page as Page);
     if (params) {
       setPageParams(params);
     }
