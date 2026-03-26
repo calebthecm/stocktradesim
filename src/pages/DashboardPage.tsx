@@ -1,230 +1,178 @@
 import { useState, useEffect } from 'react';
-import { User, getPortfolios, getTransactions, Transaction } from '../services/supabase';
+import { User, getPortfolios, getTransactions, Transaction, Portfolio } from '../services/supabase';
 import { getCurrentPrice, getAllStocks } from '../services/marketSimulation';
 import { StockCard } from '../components/StockCard';
-import { BarChart3, TrendingUp, Wallet, Activity } from 'lucide-react';
 
 interface DashboardPageProps {
   user: User;
-  onNavigate: (page: string, params?: Record<string, any>) => void;
+  onNavigate: (page: string, params?: Record<string, unknown>) => void;
 }
 
+const STARTING_BALANCE = 100_000;
+
 export function DashboardPage({ user, onNavigate }: DashboardPageProps) {
-  const [portfolios, setPortfolios] = useState<any[]>([]);
+  const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [portfolioValue, setPortfolioValue] = useState(0);
-  const [totalProfit, setTotalProfit] = useState(0);
 
   useEffect(() => {
-    const loadData = async () => {
-      const portfolioData = await getPortfolios(user.id);
-      const transactionData = await getTransactions(user.id);
+    const load = async () => {
+      const [portData, txData] = await Promise.all([
+        getPortfolios(user.id),
+        getTransactions(user.id),
+      ]);
 
       let value = 0;
-      let costBasis = 0;
-
-      for (const position of portfolioData) {
-        const currentPrice = getCurrentPrice(position.symbol);
-        value += currentPrice * position.quantity;
-        costBasis += position.average_cost_basis * position.quantity;
+      for (const pos of portData) {
+        value += getCurrentPrice(pos.symbol) * Math.abs(pos.quantity);
       }
-
-      setPortfolios(portfolioData);
-      setTransactions(transactionData);
+      setPortfolios(portData);
+      setTransactions(txData);
       setPortfolioValue(value);
-      setTotalProfit(value + user.virtual_balance - 100000);
     };
 
-    loadData();
-    const interval = setInterval(loadData, 5000);
-    return () => clearInterval(interval);
+    load();
+    const id = setInterval(load, 5000);
+    return () => clearInterval(id);
   }, [user]);
 
+  const totalPL = user.virtual_balance + portfolioValue - STARTING_BALANCE;
+  const netWorth = user.virtual_balance + portfolioValue;
   const stocks = getAllStocks();
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-7xl mx-auto px-4">
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Trading Dashboard</h1>
-          <p className="text-gray-600">Welcome back, {user.email}</p>
-        </div>
+    <div className="max-w-7xl mx-auto px-4 py-5">
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-gray-600 text-sm">Available Cash</p>
-                <p className="text-3xl font-bold text-blue-600">
-                  ${user.virtual_balance.toFixed(2)}
-                </p>
-              </div>
-              <Wallet className="text-blue-600" size={32} />
-            </div>
+      {/* ── Stats Row ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        {[
+          { label: 'Available Cash', value: `$${user.virtual_balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, color: 'text-sim-blue' },
+          { label: 'Positions Value', value: `$${portfolioValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, color: 'text-sim-green' },
+          { label: 'Total P/L', value: `${totalPL >= 0 ? '+' : ''}$${totalPL.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, color: totalPL >= 0 ? 'text-sim-green' : 'text-sim-red' },
+          { label: 'Net Worth', value: `$${netWorth.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, color: 'text-sim-text' },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="bg-sim-surface border border-sim-border rounded-lg p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.8px] text-sim-muted mb-1.5">{label}</p>
+            <p className={`text-2xl font-black font-mono ${color}`}>{value}</p>
           </div>
+        ))}
+      </div>
 
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-gray-600 text-sm">Portfolio Value</p>
-                <p className="text-3xl font-bold text-green-600">
-                  ${portfolioValue.toFixed(2)}
-                </p>
-              </div>
-              <BarChart3 className="text-green-600" size={32} />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-gray-600 text-sm">Total Profit/Loss</p>
-                <p
-                  className={`text-3xl font-bold ${
-                    totalProfit >= 0 ? 'text-green-600' : 'text-red-600'
-                  }`}
-                >
-                  ${totalProfit.toFixed(2)}
-                </p>
-              </div>
-              <TrendingUp
-                className={totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}
-                size={32}
-              />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-gray-600 text-sm">Total Net Worth</p>
-                <p className="text-3xl font-bold text-purple-600">
-                  ${(user.virtual_balance + portfolioValue).toFixed(2)}
-                </p>
-              </div>
-              <Activity className="text-purple-600" size={32} />
-            </div>
-          </div>
-        </div>
-
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        {/* ── Holdings ── */}
         {portfolios.length > 0 && (
-          <div className="bg-white rounded-lg shadow p-6 mb-8">
-            <h2 className="text-2xl font-bold mb-4">Your Holdings</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="border-b border-gray-200">
-                  <tr>
-                    <th className="text-left py-2 px-4 font-semibold">Symbol</th>
-                    <th className="text-right py-2 px-4 font-semibold">Quantity</th>
-                    <th className="text-right py-2 px-4 font-semibold">Avg Cost</th>
-                    <th className="text-right py-2 px-4 font-semibold">Current Price</th>
-                    <th className="text-right py-2 px-4 font-semibold">Value</th>
-                    <th className="text-right py-2 px-4 font-semibold">P/L</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {portfolios.map((position) => {
-                    const currentPrice = getCurrentPrice(position.symbol);
-                    const pnl = position.quantity < 0 && position.short_entry_price
-                      ? (position.short_entry_price - currentPrice) * Math.abs(position.quantity)
-                      : (currentPrice - position.average_cost_basis) * position.quantity;
-                    const value = currentPrice * Math.abs(position.quantity);
-                    const costBasis = position.average_cost_basis * Math.abs(position.quantity);
-                    const plPercent = costBasis !== 0 ? (pnl / costBasis) * 100 : 0;
-
-                    return (
-                      <tr
-                        key={position.id}
-                        className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
-                        onClick={() => onNavigate('trade', { symbol: position.symbol })}
-                      >
-                        <td className="py-3 px-4 font-semibold">
-                          {position.symbol}
-                          {position.quantity < 0 && (
-                            <span className="text-xs font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded ml-1">
-                              SHORT
-                            </span>
-                          )}
-                        </td>
-                        <td className="text-right py-3 px-4">{position.quantity}</td>
-                        <td className="text-right py-3 px-4">
-                          ${position.average_cost_basis.toFixed(2)}
-                        </td>
-                        <td className="text-right py-3 px-4">${currentPrice.toFixed(2)}</td>
-                        <td className="text-right py-3 px-4 font-semibold">
-                          ${value.toFixed(2)}
-                        </td>
-                        <td
-                          className={`text-right py-3 px-4 font-semibold ${
-                            pnl >= 0 ? 'text-green-600' : 'text-red-600'
-                          }`}
-                        >
-                          ${pnl.toFixed(2)} ({plPercent.toFixed(2)}%)
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+          <div className="bg-sim-surface border border-sim-border rounded-lg overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-sim-border flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-[0.8px] text-sim-muted">Your Holdings</span>
+              <button
+                onClick={() => onNavigate('trade')}
+                className="text-[10px] text-sim-blue font-semibold hover:underline"
+              >
+                Trade →
+              </button>
             </div>
+            <table className="w-full text-[11px]">
+              <thead>
+                <tr className="border-b border-sim-border">
+                  {['Symbol', 'Qty', 'Avg', 'Price', 'P/L'].map((h) => (
+                    <th
+                      key={h}
+                      className={`py-2 px-3 text-[9px] font-bold uppercase tracking-[0.8px] text-sim-muted ${h === 'Symbol' ? 'text-left' : 'text-right'}`}
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {portfolios.map((pos) => {
+                  const cur = getCurrentPrice(pos.symbol);
+                  const pnl = pos.quantity < 0 && pos.short_entry_price
+                    ? (pos.short_entry_price - cur) * Math.abs(pos.quantity)
+                    : (cur - pos.average_cost_basis) * pos.quantity;
+                  const basis = pos.average_cost_basis * Math.abs(pos.quantity);
+                  const pct = basis !== 0 ? (pnl / basis) * 100 : 0;
+
+                  return (
+                    <tr
+                      key={pos.id}
+                      className="border-b border-sim-border hover:bg-sim-hover cursor-pointer"
+                      onClick={() => onNavigate('trade', { symbol: pos.symbol })}
+                    >
+                      <td className="py-2.5 px-3 font-black text-sim-text">
+                        {pos.symbol}
+                        {pos.quantity < 0 && (
+                          <span className="ml-1 text-[8px] font-black text-sim-red bg-sim-red/10 px-1 py-0.5 rounded">
+                            SHORT
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono text-sim-text">{pos.quantity}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-sim-muted">${pos.average_cost_basis.toFixed(2)}</td>
+                      <td className={`py-2.5 px-3 text-right font-mono font-bold ${cur >= pos.average_cost_basis ? 'text-sim-green' : 'text-sim-red'}`}>
+                        ${cur.toFixed(2)}
+                      </td>
+                      <td className={`py-2.5 px-3 text-right font-mono font-bold ${pnl >= 0 ? 'text-sim-green' : 'text-sim-red'}`}>
+                        {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}<br />
+                        <span className="text-[9px]">{pct >= 0 ? '+' : ''}{pct.toFixed(1)}%</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-2xl font-bold mb-4">Market Overview</h2>
-            <div className="grid grid-cols-2 gap-3">
-              {stocks.slice(0, 8).map((stock) => (
-                <StockCard
-                  key={stock.symbol}
-                  symbol={stock.symbol}
-                  name={stock.name}
-                  onSelect={(symbol) => onNavigate('trade', { symbol })}
-                />
-              ))}
-            </div>
+        {/* ── Recent Trades ── */}
+        <div className="bg-sim-surface border border-sim-border rounded-lg overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-sim-border">
+            <span className="text-[11px] font-bold uppercase tracking-[0.8px] text-sim-muted">Recent Trades</span>
           </div>
-
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-2xl font-bold mb-4">Recent Trades</h2>
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {transactions.slice(0, 10).map((transaction) => {
-                const date = new Date(transaction.created_at);
-                return (
-                  <div
-                    key={transaction.id}
-                    className="flex items-center justify-between py-2 border-b border-gray-100"
-                  >
-                    <div>
-                      <p className="font-semibold">{transaction.symbol}</p>
-                      <p className="text-sm text-gray-600">
-                        {transaction.type === 'dividend' && (
-                          <span className="text-xs font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded mr-1">
-                            DIV
-                          </span>
-                        )}
-                        {transaction.type === 'buy' ? 'Buy' : transaction.type === 'sell' ? 'Sell' : 'Dividend'} {transaction.quantity} @
-                        ${transaction.price.toFixed(2)}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p
-                        className={`font-semibold ${
-                          transaction.type === 'buy' ? 'text-red-600' : 'text-green-600'
-                        }`}
-                      >
-                        {transaction.type === 'buy' ? '-' : '+'}$
-                        {transaction.total_cost.toFixed(2)}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {date.toLocaleDateString()} {date.toLocaleTimeString()}
-                      </p>
-                    </div>
+          <div className="divide-y divide-sim-border max-h-64 overflow-y-auto">
+            {transactions.slice(0, 12).map((tx) => (
+              <div key={tx.id} className="flex items-center justify-between px-4 py-2.5">
+                <div>
+                  <span className="font-black text-sim-text text-[12px]">{tx.symbol}</span>
+                  <div className="text-[10px] text-sim-muted mt-0.5">
+                    {tx.type === 'dividend' && (
+                      <span className="text-sim-amber bg-sim-amber/10 px-1 py-0.5 rounded text-[8px] font-black mr-1">DIV</span>
+                    )}
+                    {tx.type.charAt(0).toUpperCase() + tx.type.slice(1)} {tx.quantity} @ ${tx.price.toFixed(2)}
                   </div>
-                );
-              })}
-            </div>
+                </div>
+                <div className="text-right">
+                  <div className={`font-mono font-bold text-[12px] ${tx.type === 'buy' ? 'text-sim-red' : 'text-sim-green'}`}>
+                    {tx.type === 'buy' ? '-' : '+'}${tx.total_cost.toFixed(2)}
+                  </div>
+                  <div className="text-[9px] text-sim-muted">
+                    {new Date(tx.created_at).toLocaleTimeString()}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {transactions.length === 0 && (
+              <div className="px-4 py-8 text-center text-sim-muted text-[12px]">No trades yet.</div>
+            )}
           </div>
+        </div>
+      </div>
+
+      {/* ── Market Overview ── */}
+      <div className="bg-sim-surface border border-sim-border rounded-lg overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-sim-border flex items-center justify-between">
+          <span className="text-[11px] font-bold uppercase tracking-[0.8px] text-sim-muted">Market Overview</span>
+          <span className="text-[9px] text-sim-muted">SIMULATED · updates every second</span>
+        </div>
+        <div className="p-3 grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+          {stocks.map((s) => (
+            <StockCard
+              key={s.symbol}
+              symbol={s.symbol}
+              name={s.name}
+              onSelect={(sym) => onNavigate('trade', { symbol: sym })}
+            />
+          ))}
         </div>
       </div>
     </div>
