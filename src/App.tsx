@@ -45,7 +45,9 @@ function App() {
               <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold text-sm">T</span>
               </div>
-              <h1 className="text-xl font-bold text-gray-900">TradeVault</h1>
+              <h1 className="text-xl font-bold text-gray-900">
+                stocksimulator<span className="text-blue-600">.win</span>
+              </h1>
             </div>
 
             {user && (
