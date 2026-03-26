@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { User, getOrders, getPortfolios, Order } from '../services/supabase';
 import { getCurrentPrice, getAllStocks } from '../services/marketSimulation';
 import { placeBracketOrder, executeShortOrder, executeCoverOrder, TradeResult } from '../services/tradingEngine';
 import { CandlestickChart } from '../components/CandlestickChart';
+import { DrawingToolbox, DrawingTool } from '../components/DrawingToolbox';
 import { useStockPrice } from '../hooks/useStockPrice';
-import { X } from 'lucide-react';
 
 interface TradePageProps {
   user: User;
@@ -14,256 +14,316 @@ interface TradePageProps {
   marketOpen?: boolean;
 }
 
-export function TradePage({ user, initialSymbol = 'AAPL', onBack, onOrderExecuted, marketOpen = true }: TradePageProps) {
+type OrderType = 'MKT' | 'LMT' | 'STOP';
+
+export function TradePage({
+  user,
+  initialSymbol = 'AAPL',
+  onBack,
+  onOrderExecuted,
+  marketOpen = true,
+}: TradePageProps) {
   const [symbol, setSymbol] = useState(initialSymbol);
   const [tradeMode, setTradeMode] = useState<'long' | 'short'>('long');
-  const [quantity, setQuantity] = useState('');
+  const [orderType, setOrderType] = useState<OrderType>('MKT');
+  const [quantity, setQuantity] = useState('10');
+  const [limitPrice, setLimitPrice] = useState('');
+  const [tpPrice, setTpPrice] = useState<number | null>(null);
+  const [slPrice, setSlPrice] = useState<number | null>(null);
+  const [entryPrice, setEntryPrice] = useState(0);
+  const [activeTool, setActiveTool] = useState<DrawingTool>('cursor');
+  const [orders, setOrders] = useState<Order[]>([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [takeProfitPrice, setTakeProfitPrice] = useState<number | null>(null);
-  const [stopLossPrice, setStopLossPrice] = useState<number | null>(null);
-  const [chartEntry, setChartEntry] = useState<number>(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [shortWarning, setShortWarning] = useState(false);
 
   const { price } = useStockPrice(symbol, 1000);
   const stocks = getAllStocks();
 
   useEffect(() => {
-    const loadOrders = async () => {
-      const pendingOrders = await getOrders(user.id);
-      setOrders(pendingOrders.filter((o) => o.status === 'pending'));
-    };
+    if (orderType === 'MKT') setEntryPrice(price);
+  }, [price, orderType]);
 
-    loadOrders();
-    const interval = setInterval(loadOrders, 5000);
-    return () => clearInterval(interval);
+  useEffect(() => {
+    const load = async () => {
+      const all = await getOrders(user.id);
+      setOrders(all.filter((o) => o.status === 'pending'));
+    };
+    load();
+    const id = setInterval(load, 5000);
+    return () => clearInterval(id);
   }, [user]);
 
   useEffect(() => {
-    const checkShortWarning = async () => {
-      if (tradeMode !== 'short' || !user) return;
+    const check = async () => {
+      if (tradeMode !== 'short') return;
       const ports = await getPortfolios(user.id);
       const pos = ports.find((p) => p.symbol === symbol);
       if (pos && pos.quantity < 0 && pos.short_entry_price) {
-        const currentPrice = getCurrentPrice(symbol);
-        setShortWarning(currentPrice > pos.short_entry_price * 1.25);
+        setShortWarning(getCurrentPrice(symbol) > pos.short_entry_price * 1.25);
       } else {
         setShortWarning(false);
       }
     };
-    checkShortWarning();
+    check();
   }, [tradeMode, symbol, user]);
 
-  const handleTradeIntent = useCallback((entry: number, tp: number | null, sl: number | null) => {
-    setChartEntry(entry);
-    setTakeProfitPrice(tp);
-    setStopLossPrice(sl);
-  }, []);
+  const handleTradeIntent = useCallback(
+    (entry: number, tp: number | null, sl: number | null) => {
+      setEntryPrice(entry);
+      setTpPrice(tp);
+      setSlPrice(sl);
+      if (orderType === 'LMT' || orderType === 'STOP') setLimitPrice(String(entry));
+    },
+    [orderType],
+  );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(''); setSuccess('');
-    const qty = parseFloat(quantity);
-    if (!qty || qty <= 0) { setError('Please enter a valid quantity'); return; }
+  const rrRatio =
+    tpPrice && slPrice && entryPrice
+      ? Math.abs(tpPrice - entryPrice) / Math.abs(slPrice - entryPrice)
+      : null;
 
-    setIsLoading(true);
-    try {
-      let result: TradeResult;
+  const qty = parseInt(quantity, 10) || 0;
+  const execPrice = orderType === 'MKT' ? price : parseFloat(limitPrice) || price;
+  const totalCost = qty * execPrice;
 
-      if (tradeMode === 'long') {
-        result = await placeBracketOrder(user, symbol, qty, takeProfitPrice, stopLossPrice);
-      } else {
-        const ports = await getPortfolios(user.id);
-        const pos = ports.find((p) => p.symbol === symbol);
-        if (pos && pos.quantity < 0) {
-          result = await executeCoverOrder(user, symbol, qty);
-        } else {
-          result = await executeShortOrder(user, symbol, qty);
-        }
-      }
-
-      if (result.success) {
-        setSuccess(result.message);
-        setQuantity('');
-        onOrderExecuted?.();
-      } else {
-        setError(result.message);
-      }
-    } finally {
-      setIsLoading(false);
-    }
+  const submitLabel = () => {
+    if (tradeMode === 'short') return `SHORT ${symbol}`;
+    return `BUY ${symbol}`;
   };
 
-  const totalCost = quantity && price ? (parseFloat(quantity) * price).toFixed(2) : '0.00';
+  const handleSubmit = async () => {
+    if (!marketOpen || isSubmitting || qty <= 0) return;
+    setError('');
+    setSuccess('');
+    setIsSubmitting(true);
+
+    let result: TradeResult;
+    if (tradeMode === 'short') {
+      const ports = await getPortfolios(user.id);
+      const pos = ports.find((p) => p.symbol === symbol);
+      if (pos && pos.quantity < 0) {
+        result = await executeCoverOrder(user, symbol, qty);
+      } else {
+        result = await executeShortOrder(user, symbol, qty);
+      }
+    } else {
+      result = await placeBracketOrder(user, symbol, qty, tpPrice, slPrice);
+    }
+
+    if (result.success) {
+      setSuccess(`Order executed: ${result.message}`);
+      setTimeout(() => {
+        setSuccess('');
+        onOrderExecuted?.();
+      }, 1500);
+    } else {
+      setError(result.message);
+    }
+    setIsSubmitting(false);
+  };
+
+  // orders is loaded for pending-order awareness; rendering is deferred to a future panel
+  void orders;
+  // onBack is retained in props for parent compatibility; no back button in terminal layout
+  void onBack;
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-7xl mx-auto px-4">
-        <button
-          onClick={onBack}
-          className="mb-4 flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium"
+    <div className="flex flex-col h-[calc(100vh-70px)]">
+
+      {/* Symbol / Timeframe Bar */}
+      <div className="bg-sim-surface border-b border-sim-border h-10 flex items-center px-3 gap-3 flex-shrink-0">
+        <select
+          value={symbol}
+          onChange={(e) => setSymbol(e.target.value)}
+          className="bg-sim-bg border border-sim-border text-sim-text font-black text-[13px] rounded px-2 py-1 outline-none"
         >
-          <X size={20} />
-          Back to Dashboard
-        </button>
+          {stocks.map((s) => (
+            <option key={s.symbol} value={s.symbol}>
+              {s.symbol} — {s.name}
+            </option>
+          ))}
+        </select>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2">
-            <CandlestickChart symbol={symbol} onTradeIntent={handleTradeIntent} />
-          </div>
+        <div className="w-px h-5 bg-sim-border" />
 
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-2xl font-bold mb-4">Place Order</h2>
+        <span className="text-[18px] font-black font-mono text-sim-green">${price.toFixed(2)}</span>
+        <span className="text-[11px] text-sim-muted">{symbol}</span>
 
-            {!marketOpen && (
-              <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700 font-medium">
-                🔴 Market closed — trading resumes at the next open session.
-              </div>
-            )}
+        <div className="w-px h-5 bg-sim-border" />
 
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Symbol
-              </label>
-              <select
-                value={symbol}
-                onChange={(e) => {
-                  setSymbol(e.target.value);
-                  setError('');
-                  setSuccess('');
-                }}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {stocks.map((stock) => (
-                  <option key={stock.symbol} value={stock.symbol}>
-                    {stock.symbol} - {stock.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="mb-4 p-4 bg-gray-50 rounded-lg">
-              <p className="text-xs text-gray-600">Current Price</p>
-              <p className="text-3xl font-bold text-blue-600">${price.toFixed(2)}</p>
-            </div>
-
-            <div className="flex gap-0 mb-4 rounded-lg overflow-hidden border border-gray-200">
-              <button
-                type="button"
-                onClick={() => setTradeMode('long')}
-                className={`flex-1 py-2 font-semibold text-sm transition-colors ${
-                  tradeMode === 'long' ? 'bg-green-600 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                LONG
-              </button>
-              <button
-                type="button"
-                onClick={() => setTradeMode('short')}
-                className={`flex-1 py-2 font-semibold text-sm transition-colors ${
-                  tradeMode === 'short' ? 'bg-red-600 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                SHORT
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Quantity
-                </label>
-                <input
-                  type="number"
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="0"
-                  step="0.01"
-                  required
-                />
-              </div>
-
-              <div className="bg-blue-50 p-3 rounded-lg">
-                <p className="text-xs text-gray-600">Estimated Value</p>
-                <p className="text-2xl font-bold text-blue-600">${totalCost}</p>
-              </div>
-
-              {takeProfitPrice !== null && stopLossPrice !== null && chartEntry > 0 && (
-                <p className="text-xs text-gray-500 mb-2">
-                  R/R: 1:{Math.abs((takeProfitPrice - chartEntry) / (chartEntry - stopLossPrice)).toFixed(2)}
-                </p>
-              )}
-
-              {takeProfitPrice !== null && (
-                <p className="text-xs text-green-600">Take Profit: ${takeProfitPrice.toFixed(2)}</p>
-              )}
-              {stopLossPrice !== null && (
-                <p className="text-xs text-red-600">Stop Loss: ${stopLossPrice.toFixed(2)}</p>
-              )}
-
-              {error && (
-                <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-sm">
-                  {error}
-                </div>
-              )}
-
-              {success && (
-                <div className="bg-green-50 border border-green-200 text-green-700 px-3 py-2 rounded-lg text-sm">
-                  {success}
-                </div>
-              )}
-
-              {tradeMode === 'short' && shortWarning && (
-                <div className="bg-amber-50 border border-amber-300 text-amber-800 text-xs px-3 py-2 rounded mb-3">
-                  ⚠️ Short position at risk — current price is more than 25% above your entry. Consider covering.
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={isLoading || !marketOpen}
-                className={`w-full py-3 rounded-lg font-semibold text-white transition-colors ${
-                  !marketOpen
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : tradeMode === 'long'
-                    ? 'bg-green-600 hover:bg-green-700 disabled:bg-gray-400'
-                    : 'bg-red-600 hover:bg-red-700 disabled:bg-gray-400'
-                }`}
-              >
-                {isLoading
-                  ? 'Processing...'
-                  : tradeMode === 'long'
-                  ? `Buy ${quantity || '0'} ${symbol}`
-                  : `Short ${quantity || '0'} ${symbol}`}
-              </button>
-            </form>
-
-            {orders.length > 0 && (
-              <div className="mt-6 pt-6 border-t border-gray-200">
-                <h3 className="font-semibold mb-3">Pending Orders</h3>
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {orders.map((order) => (
-                    <div
-                      key={order.id}
-                      className="bg-yellow-50 border border-yellow-200 rounded p-2 text-xs"
-                    >
-                      <p className="font-semibold">
-                        {order.side === 'buy' ? 'BUY' : 'SELL'} {order.quantity} {order.symbol}
-                      </p>
-                      <p className="text-gray-600">
-                        {order.type} @ ${order.price.toFixed(2)}
-                        {order.stop_price && ` (Stop: $${order.stop_price.toFixed(2)})`}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+        {/* R/R display */}
+        <div className="ml-auto flex items-center gap-4 text-[10px]">
+          {entryPrice > 0 && (
+            <span className="text-sim-muted">
+              Entry{' '}
+              <span className="font-mono font-bold text-sim-blue">${entryPrice.toFixed(2)}</span>
+            </span>
+          )}
+          {tpPrice && (
+            <span className="text-sim-muted">
+              TP{' '}
+              <span className="font-mono font-bold text-sim-green">${tpPrice.toFixed(2)}</span>
+            </span>
+          )}
+          {slPrice && (
+            <span className="text-sim-muted">
+              SL{' '}
+              <span className="font-mono font-bold text-sim-red">${slPrice.toFixed(2)}</span>
+            </span>
+          )}
+          {rrRatio && (
+            <span className="text-sim-muted">
+              R/R{' '}
+              <span className="font-mono font-bold text-sim-amber">1:{rrRatio.toFixed(1)}</span>
+            </span>
+          )}
         </div>
+      </div>
+
+      {/* Toolbox + Chart */}
+      <div className="flex flex-1 overflow-hidden">
+        <DrawingToolbox activeTool={activeTool} onToolChange={setActiveTool} />
+        <div className="flex-1 overflow-hidden">
+          <CandlestickChart symbol={symbol} onTradeIntent={handleTradeIntent} />
+        </div>
+      </div>
+
+      {/* Order Bar */}
+      <div
+        className={`border-t border-sim-border h-11 flex items-center px-3 gap-3 flex-shrink-0 ${
+          marketOpen ? 'bg-sim-surface' : 'bg-sim-surface/60'
+        }`}
+      >
+        {!marketOpen && (
+          <span className="text-[9px] font-black text-sim-red border border-sim-red/30 bg-sim-red/5 px-2 py-1 rounded tracking-[0.5px]">
+            MARKET CLOSED
+          </span>
+        )}
+
+        {/* Long / Short toggle */}
+        <div className="flex rounded overflow-hidden border border-sim-border">
+          <button
+            onClick={() => setTradeMode('long')}
+            className={`px-3 py-1 text-[11px] font-black transition-colors ${
+              tradeMode === 'long' ? 'bg-sim-green text-sim-bg' : 'text-sim-muted hover:text-sim-text'
+            }`}
+          >
+            LONG
+          </button>
+          <button
+            onClick={() => setTradeMode('short')}
+            className={`px-3 py-1 text-[11px] font-black transition-colors ${
+              tradeMode === 'short' ? 'bg-sim-red text-white' : 'text-sim-muted hover:text-sim-text'
+            }`}
+          >
+            SHORT
+          </button>
+        </div>
+
+        <div className="w-px h-5 bg-sim-border" />
+
+        {/* Qty */}
+        <div className="flex flex-col">
+          <span className="text-[8px] text-sim-muted uppercase tracking-[0.5px]">Qty</span>
+          <input
+            type="number"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            className="w-16 bg-sim-bg border border-sim-border text-sim-text font-mono font-bold text-[12px] rounded px-2 py-0.5 outline-none focus:border-sim-blue"
+          />
+        </div>
+
+        {/* Order type */}
+        <div className="flex rounded overflow-hidden border border-sim-border">
+          {(['MKT', 'LMT', 'STOP'] as OrderType[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => setOrderType(t)}
+              className={`px-2 py-1 text-[10px] font-bold transition-colors ${
+                orderType === t ? 'bg-sim-hover text-sim-text' : 'text-sim-muted hover:text-sim-text'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {/* Price input — LMT/STOP only */}
+        {orderType !== 'MKT' && (
+          <div className="flex flex-col">
+            <span className="text-[8px] text-sim-muted uppercase tracking-[0.5px]">Price</span>
+            <input
+              type="number"
+              value={limitPrice}
+              onChange={(e) => setLimitPrice(e.target.value)}
+              className="w-24 bg-sim-bg border border-sim-border text-sim-text font-mono font-bold text-[12px] rounded px-2 py-0.5 outline-none focus:border-sim-blue"
+            />
+          </div>
+        )}
+
+        <div className="w-px h-5 bg-sim-border" />
+
+        {/* Take Profit */}
+        <div className="flex flex-col">
+          <span className="text-[8px] text-sim-green uppercase tracking-[0.5px]">Take Profit</span>
+          <input
+            type="number"
+            value={tpPrice ?? ''}
+            onChange={(e) => setTpPrice(e.target.value ? parseFloat(e.target.value) : null)}
+            placeholder="—"
+            className="w-24 bg-sim-bg border border-sim-green/20 text-sim-green font-mono font-bold text-[12px] rounded px-2 py-0.5 outline-none focus:border-sim-green"
+          />
+        </div>
+
+        {/* Stop Loss */}
+        <div className="flex flex-col">
+          <span className="text-[8px] text-sim-red uppercase tracking-[0.5px]">Stop Loss</span>
+          <input
+            type="number"
+            value={slPrice ?? ''}
+            onChange={(e) => setSlPrice(e.target.value ? parseFloat(e.target.value) : null)}
+            placeholder="—"
+            className="w-24 bg-sim-bg border border-sim-red/20 text-sim-red font-mono font-bold text-[12px] rounded px-2 py-0.5 outline-none focus:border-sim-red"
+          />
+        </div>
+
+        <div className="w-px h-5 bg-sim-border" />
+
+        {/* Cost + R/R preview */}
+        <div className="flex flex-col text-[10px]">
+          <span className="font-mono font-bold text-sim-text">
+            ${totalCost.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+          </span>
+          {rrRatio && <span className="text-sim-amber font-bold">R/R 1:{rrRatio.toFixed(1)}</span>}
+        </div>
+
+        {/* Error / success / warning */}
+        {error && (
+          <span className="text-sim-red text-[10px] max-w-[160px] truncate">{error}</span>
+        )}
+        {success && (
+          <span className="text-sim-green text-[10px] max-w-[160px] truncate">{success}</span>
+        )}
+        {shortWarning && !error && (
+          <span className="text-sim-amber text-[10px]">Short up 25%+</span>
+        )}
+
+        {/* Submit */}
+        <button
+          onClick={handleSubmit}
+          disabled={!marketOpen || isSubmitting || qty <= 0}
+          className={`ml-auto px-4 py-1.5 rounded font-black text-[12px] tracking-[0.5px] transition-colors ${
+            marketOpen && qty > 0 && !isSubmitting
+              ? tradeMode === 'long'
+                ? 'bg-sim-green text-sim-bg hover:opacity-90'
+                : 'bg-sim-red text-white hover:opacity-90'
+              : 'bg-sim-hover text-sim-muted cursor-not-allowed'
+          }`}
+        >
+          {isSubmitting ? '...' : submitLabel()}
+        </button>
       </div>
     </div>
   );
