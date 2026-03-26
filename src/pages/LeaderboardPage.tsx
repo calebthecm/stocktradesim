@@ -1,4 +1,3 @@
-// src/pages/LeaderboardPage.tsx
 import { useState, useEffect } from 'react';
 import { User, getLeaderboardData, LeaderboardEntry } from '../services/supabase';
 import { getCurrentPrice } from '../services/marketSimulation';
@@ -11,20 +10,16 @@ const STARTING_BALANCE = 100_000;
 
 function computeEquity(entry: LeaderboardEntry): number {
   let equity = entry.virtual_balance;
-
   for (const pos of entry.portfolios) {
     const price = getCurrentPrice(pos.symbol);
     if (pos.quantity > 0) {
       equity += pos.quantity * price;
     } else if (pos.quantity < 0) {
-      const absQty = Math.abs(pos.quantity);
+      const abs = Math.abs(pos.quantity);
       const entryPrice = pos.short_entry_price ?? price;
-      const collateral = absQty * entryPrice * 1.5;
-      const pnl = (entryPrice - price) * absQty;
-      equity += collateral + pnl;
+      equity += abs * entryPrice * 1.5 + (entryPrice - price) * abs;
     }
   }
-
   return equity;
 }
 
@@ -36,101 +31,105 @@ export function LeaderboardPage({ user }: LeaderboardPageProps) {
     const load = async () => {
       setIsLoading(true);
       const data = await getLeaderboardData();
-      const withEquity = data
+      const ranked = data
         .map((e) => ({ ...e, equity: computeEquity(e) }))
         .sort((a, b) => b.equity - a.equity)
         .map((e, i) => ({ ...e, rank: i + 1 }));
-      setEntries(withEquity);
+      setEntries(ranked);
       setIsLoading(false);
     };
     load();
-    const interval = setInterval(load, 30_000);
-    return () => clearInterval(interval);
+    const id = setInterval(load, 30_000);
+    return () => clearInterval(id);
   }, []);
 
-  const myEntry = entries.find((e) => e.id === user.id);
-  const myReturn = myEntry ? ((myEntry.equity - STARTING_BALANCE) / STARTING_BALANCE * 100) : 0;
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
-      </div>
-    );
-  }
+  const me = entries.find((e) => e.id === user.id);
+  const myRet = me ? ((me.equity - STARTING_BALANCE) / STARTING_BALANCE) * 100 : 0;
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-4xl mx-auto px-4">
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Leaderboard</h1>
+    <div className="max-w-4xl mx-auto px-4 py-5">
+      <p className="text-[10px] font-black uppercase tracking-[1.5px] text-sim-muted mb-4">Leaderboard</p>
 
-        {myEntry && (
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <p className="text-xs text-blue-600 font-semibold uppercase">Your Rank</p>
-              <p className="text-3xl font-bold text-blue-700">#{myEntry.rank}</p>
-              <p className="text-xs text-gray-500">of {entries.length} traders</p>
-            </div>
-            <div className={`${myReturn >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'} border rounded-lg p-4`}>
-              <p className={`text-xs font-semibold uppercase ${myReturn >= 0 ? 'text-green-600' : 'text-red-600'}`}>Your Return</p>
-              <p className={`text-3xl font-bold ${myReturn >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                {myReturn >= 0 ? '+' : ''}{myReturn.toFixed(2)}%
-              </p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-lg p-4">
-              <p className="text-xs text-gray-500 font-semibold uppercase">Portfolio Value</p>
-              <p className="text-3xl font-bold text-gray-900">${myEntry.equity.toLocaleString('en-US', { maximumFractionDigits: 0 })}</p>
-            </div>
+      {/* My stats */}
+      {me && (
+        <div className="grid grid-cols-3 gap-3 mb-5">
+          <div className="bg-sim-surface border border-sim-border rounded-lg p-4">
+            <p className="text-[9px] font-bold uppercase tracking-[0.8px] text-sim-muted mb-1">Your Rank</p>
+            <p className="text-3xl font-black text-sim-blue">#{me.rank}</p>
+            <p className="text-[10px] text-sim-muted">of {entries.length} traders</p>
           </div>
-        )}
+          <div className={`bg-sim-surface border rounded-lg p-4 ${myRet >= 0 ? 'border-sim-green' : 'border-sim-red'}`}>
+            <p className="text-[9px] font-bold uppercase tracking-[0.8px] text-sim-muted mb-1">Your Return</p>
+            <p className={`text-3xl font-black ${myRet >= 0 ? 'text-sim-green' : 'text-sim-red'}`}>
+              {myRet >= 0 ? '+' : ''}{myRet.toFixed(2)}%
+            </p>
+          </div>
+          <div className="bg-sim-surface border border-sim-border rounded-lg p-4">
+            <p className="text-[9px] font-bold uppercase tracking-[0.8px] text-sim-muted mb-1">Portfolio Value</p>
+            <p className="text-3xl font-black text-sim-text">
+              ${me.equity.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+            </p>
+          </div>
+        </div>
+      )}
 
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <div className="grid grid-cols-[40px_1fr_120px_100px] gap-0 px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-            <span>#</span>
-            <span>Trader</span>
-            <span className="text-right">Value</span>
-            <span className="text-right">Return</span>
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <div className="w-6 h-6 rounded-full border-2 border-sim-border border-t-sim-blue animate-spin" />
+        </div>
+      ) : (
+        <div className="bg-sim-surface border border-sim-border rounded-lg overflow-hidden">
+          {/* Header */}
+          <div className="grid grid-cols-[40px_1fr_130px_90px] px-4 py-2 border-b border-sim-border bg-sim-bg">
+            {['#', 'Trader', 'Value', 'Return'].map((h, i) => (
+              <span
+                key={h}
+                className={`text-[9px] font-black uppercase tracking-[0.8px] text-sim-muted ${i > 1 ? 'text-right' : ''}`}
+              >
+                {h}
+              </span>
+            ))}
           </div>
 
           {entries.map((entry) => {
-            const ret = ((entry.equity - STARTING_BALANCE) / STARTING_BALANCE * 100);
+            const ret = ((entry.equity - STARTING_BALANCE) / STARTING_BALANCE) * 100;
             const isMe = entry.id === user.id;
+            const rankIcon = entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : null;
             return (
               <div
                 key={entry.id}
-                className={`grid grid-cols-[40px_1fr_120px_100px] gap-0 px-4 py-3 border-b border-gray-100 items-center ${
-                  isMe ? 'bg-blue-50' : ''
+                className={`grid grid-cols-[40px_1fr_130px_90px] px-4 py-3 border-b border-sim-border items-center ${
+                  isMe ? 'bg-sim-blue/5' : 'hover:bg-sim-hover'
                 }`}
               >
-                <span className={`text-sm font-bold ${
-                  entry.rank === 1 ? 'text-yellow-500' :
-                  entry.rank === 2 ? 'text-gray-400' :
-                  entry.rank === 3 ? 'text-amber-600' :
-                  isMe ? 'text-blue-600' : 'text-gray-500'
+                <span className={`text-[12px] font-black ${
+                  entry.rank === 1 ? 'text-yellow-400'
+                  : entry.rank === 2 ? 'text-sim-muted'
+                  : entry.rank === 3 ? 'text-sim-amber'
+                  : isMe ? 'text-sim-blue' : 'text-sim-muted'
                 }`}>
-                  {entry.rank <= 3 ? ['🥇','🥈','🥉'][entry.rank - 1] : entry.rank}
+                  {rankIcon ?? entry.rank}
                 </span>
                 <div>
-                  <span className={`text-sm font-semibold ${isMe ? 'text-blue-700' : 'text-gray-900'}`}>
+                  <span className={`text-[12px] font-bold ${isMe ? 'text-sim-blue' : 'text-sim-text'}`}>
                     {entry.display_name ?? 'Anonymous'}{isMe ? ' (you)' : ''}
                   </span>
-                  <div className="text-xs text-gray-400">
-                    {entry.portfolios.slice(0, 2).map((p) => p.symbol).join(', ')}
+                  <div className="text-[9px] text-sim-muted">
+                    {entry.portfolios.slice(0, 3).map((p) => p.symbol).join(' · ')}
                   </div>
                 </div>
-                <span className="text-sm font-semibold text-gray-900 text-right">
+                <span className="text-right font-mono font-bold text-[12px] text-sim-text">
                   ${entry.equity.toLocaleString('en-US', { maximumFractionDigits: 0 })}
                 </span>
-                <span className={`text-sm font-semibold text-right ${ret >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <span className={`text-right font-mono font-bold text-[12px] ${ret >= 0 ? 'text-sim-green' : 'text-sim-red'}`}>
                   {ret >= 0 ? '+' : ''}{ret.toFixed(2)}%
                 </span>
               </div>
             );
           })}
         </div>
-
-        <p className="text-xs text-gray-400 mt-3 text-center">Refreshes every 30 seconds</p>
-      </div>
+      )}
+      <p className="text-[10px] text-sim-muted mt-3 text-center">Refreshes every 30 seconds</p>
     </div>
   );
 }
