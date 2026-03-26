@@ -1,3 +1,5 @@
+import { getSimTimeMs } from './simClock';
+
 export interface Candle {
   timestamp: number;
   open: number;
@@ -115,7 +117,7 @@ export function getDividendYield(symbol: string): number {
   return STOCKS[symbol.toUpperCase()]?.dividendYield ?? 0;
 }
 
-export function getCurrentPrice(symbol: string, now: Date = new Date()): number {
+export function getCurrentPrice(symbol: string, now: Date = new Date(getSimTimeMs())): number {
   const config = getStockInfo(symbol);
   if (!config) return 0;
 

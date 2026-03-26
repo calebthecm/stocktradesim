@@ -1,29 +1,35 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from './hooks/useAuth';
+import { useSimClock } from './hooks/useSimClock';
 import { AuthPage } from './pages/AuthPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { TradePage } from './pages/TradePage';
 import { LeaderboardPage } from './pages/LeaderboardPage';
 import { signOut } from './services/supabase';
+import { formatCountdown } from './services/simClock';
 
 type Page = 'dashboard' | 'trade' | 'auth' | 'leaderboard';
 
 function App() {
   const { user, isLoading } = useAuth();
+  const market = useSimClock();
   const [currentPage, setCurrentPage] = useState<Page>('auth');
   const [pageParams, setPageParams] = useState<Record<string, any>>({});
 
+  // Auth redirect — only move TO auth when signed out, or TO dashboard on first load.
+  // Guard prevents this from overriding user-initiated navigation.
   useEffect(() => {
-    if (!isLoading) {
-      setCurrentPage(user ? 'dashboard' : 'auth');
+    if (isLoading) return;
+    if (!user) {
+      setCurrentPage('auth');
+    } else if (currentPage === 'auth') {
+      setCurrentPage('dashboard');
     }
-  }, [user, isLoading]);
+  }, [user, isLoading]); // intentionally omit currentPage to avoid loop
 
   const handleNavigate = (page: string, params?: Record<string, any>) => {
     setCurrentPage(page as Page);
-    if (params) {
-      setPageParams(params);
-    }
+    if (params) setPageParams(params);
   };
 
   const handleLogout = async () => {
@@ -39,7 +45,7 @@ function App() {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4" />
           <p className="text-gray-600">Loading...</p>
         </div>
       </div>
@@ -61,7 +67,26 @@ function App() {
               </div>
               <h1 className="text-xl font-bold text-gray-900">TradeVault</h1>
             </div>
+
             <div className="flex items-center gap-4">
+              {/* Market status pill */}
+              <div
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${
+                  market.isOpen
+                    ? 'bg-green-50 text-green-700 border border-green-200'
+                    : 'bg-red-50 text-red-700 border border-red-200'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    market.isOpen ? 'bg-green-500 animate-pulse' : 'bg-red-400'
+                  }`}
+                />
+                {market.isOpen
+                  ? `OPEN · closes ${formatCountdown(market.secondsRemaining)}`
+                  : `CLOSED · opens ${formatCountdown(market.secondsRemaining)}`}
+              </div>
+
               <button
                 onClick={() => handleNavigate('dashboard')}
                 className={`px-4 py-2 rounded-lg font-medium transition-colors ${
@@ -104,10 +129,7 @@ function App() {
       )}
 
       {currentPage === 'dashboard' && user && (
-        <DashboardPage
-          user={user}
-          onNavigate={handleNavigate}
-        />
+        <DashboardPage user={user} onNavigate={handleNavigate} />
       )}
 
       {currentPage === 'trade' && user && (
@@ -116,6 +138,7 @@ function App() {
           initialSymbol={pageParams.symbol || 'AAPL'}
           onBack={() => handleNavigate('dashboard')}
           onOrderExecuted={() => handleNavigate('dashboard')}
+          marketOpen={market.isOpen}
         />
       )}
 

@@ -11,9 +11,10 @@ interface TradePageProps {
   initialSymbol?: string;
   onBack: () => void;
   onOrderExecuted?: () => void;
+  marketOpen?: boolean;
 }
 
-export function TradePage({ user, initialSymbol = 'AAPL', onBack, onOrderExecuted }: TradePageProps) {
+export function TradePage({ user, initialSymbol = 'AAPL', onBack, onOrderExecuted, marketOpen = true }: TradePageProps) {
   const [symbol, setSymbol] = useState(initialSymbol);
   const [tradeMode, setTradeMode] = useState<'long' | 'short'>('long');
   const [quantity, setQuantity] = useState('');
@@ -116,6 +117,12 @@ export function TradePage({ user, initialSymbol = 'AAPL', onBack, onOrderExecute
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-2xl font-bold mb-4">Place Order</h2>
 
+            {!marketOpen && (
+              <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700 font-medium">
+                🔴 Market closed — trading resumes at the next open session.
+              </div>
+            )}
+
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Symbol
@@ -217,9 +224,11 @@ export function TradePage({ user, initialSymbol = 'AAPL', onBack, onOrderExecute
 
               <button
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || !marketOpen}
                 className={`w-full py-3 rounded-lg font-semibold text-white transition-colors ${
-                  tradeMode === 'long'
+                  !marketOpen
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : tradeMode === 'long'
                     ? 'bg-green-600 hover:bg-green-700 disabled:bg-gray-400'
                     : 'bg-red-600 hover:bg-red-700 disabled:bg-gray-400'
                 }`}
