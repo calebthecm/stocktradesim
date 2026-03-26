@@ -3,13 +3,12 @@ import { User } from '../services/supabase';
 import { supabase } from '../services/supabase';
 
 async function fetchUserRow(userId: string): Promise<User | null> {
-  const { data, error } = await supabase
+  const { data } = await supabase
     .from('users')
     .select('*')
     .eq('id', userId)
     .maybeSingle();
-  if (error) return null;
-  return data;
+  return data ?? null;
 }
 
 export function useAuth() {
@@ -19,24 +18,31 @@ export function useAuth() {
   useEffect(() => {
     let mounted = true;
 
-    // getSession() reads from localStorage — never hangs on a network call.
-    // This resolves immediately and unblocks the UI.
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    // getSession() reads localStorage — resolves in <1ms, never hangs.
+    // We unblock isLoading immediately so the UI is never stuck,
+    // then fetch the user row from the DB in the background.
+    supabase.auth.getSession().then(({ data: { session } }) => {
       if (!mounted) return;
+
+      // Auth state is known — unblock the UI right now
+      setIsLoading(false);
+
+      // Hydrate user row if there's an active session
       if (session?.user) {
-        const row = await fetchUserRow(session.user.id);
-        if (mounted) setUser(row);
+        fetchUserRow(session.user.id).then((row) => {
+          if (mounted) setUser(row);
+        });
       }
-      if (mounted) setIsLoading(false);
     });
 
-    // onAuthStateChange handles sign-in, sign-out, and token refresh going forward.
+    // Handle sign-in / sign-out / token-refresh events going forward
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      (_event, session) => {
         if (!mounted) return;
         if (session?.user) {
-          const row = await fetchUserRow(session.user.id);
-          if (mounted) setUser(row);
+          fetchUserRow(session.user.id).then((row) => {
+            if (mounted) setUser(row);
+          });
         } else {
           if (mounted) setUser(null);
         }
