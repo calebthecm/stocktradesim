@@ -46,7 +46,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
         <div className="bg-white rounded-2xl shadow-2xl p-8">
           <div className="flex items-center justify-center mb-6">
             <TrendingUp className="text-blue-600" size={32} />
-            <h1 className="text-3xl font-bold text-gray-900 ml-2">TradeVault</h1>
+            <h1 className="text-3xl font-bold text-gray-900 ml-2">stocksimulator.win| Trade. Stres. Win.</h1>
           </div>
 
           <p className="text-center text-gray-600 mb-8">

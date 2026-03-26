@@ -1,4 +1,4 @@
-# TradeVault Redesign — Design Spec
+# stocksimulator.win| Trade. Stres. Win. Redesign — Design Spec
 **Date:** 2026-03-25
 **Status:** Approved — ready for implementation planning
 
@@ -6,7 +6,7 @@
 
 ## Vision
 
-TradeVault is **not a stock market simulator**. It is an immersive game that puts the player inside the life of a solo day trader — the pressure of positions going red, the clock ticking on market hours, life events hitting at the worst moments, bills due, a leaderboard showing your rivals pulling ahead. The stress is the product. Players leave understanding what it feels like to sit at that desk.
+stocksimulator.win| Trade. Stres. Win. is **not a stock market simulator**. It is an immersive game that puts the player inside the life of a solo day trader — the pressure of positions going red, the clock ticking on market hours, life events hitting at the worst moments, bills due, a leaderboard showing your rivals pulling ahead. The stress is the product. Players leave understanding what it feels like to sit at that desk.
 
 ---
 
