@@ -16,7 +16,7 @@ export function useAuth() {
 
     getInitialUser();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (session) {
         const currentUser = await getCurrentUser();
         setUser(currentUser);

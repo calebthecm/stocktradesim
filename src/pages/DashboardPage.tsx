@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { User, getPortfolios, getTransactions, Transaction } from '../services/supabase';
 import { getCurrentPrice, getAllStocks } from '../services/marketSimulation';
 import { StockCard } from '../components/StockCard';
@@ -125,10 +125,12 @@ export function DashboardPage({ user, onNavigate }: DashboardPageProps) {
                 <tbody>
                   {portfolios.map((position) => {
                     const currentPrice = getCurrentPrice(position.symbol);
-                    const value = currentPrice * position.quantity;
-                    const costBasis = position.average_cost_basis * position.quantity;
-                    const pl = value - costBasis;
-                    const plPercent = (pl / costBasis) * 100;
+                    const pnl = position.quantity < 0 && position.short_entry_price
+                      ? (position.short_entry_price - currentPrice) * Math.abs(position.quantity)
+                      : (currentPrice - position.average_cost_basis) * position.quantity;
+                    const value = currentPrice * Math.abs(position.quantity);
+                    const costBasis = position.average_cost_basis * Math.abs(position.quantity);
+                    const plPercent = costBasis !== 0 ? (pnl / costBasis) * 100 : 0;
 
                     return (
                       <tr
@@ -136,7 +138,14 @@ export function DashboardPage({ user, onNavigate }: DashboardPageProps) {
                         className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
                         onClick={() => onNavigate('trade', { symbol: position.symbol })}
                       >
-                        <td className="py-3 px-4 font-semibold">{position.symbol}</td>
+                        <td className="py-3 px-4 font-semibold">
+                          {position.symbol}
+                          {position.quantity < 0 && (
+                            <span className="text-xs font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded ml-1">
+                              SHORT
+                            </span>
+                          )}
+                        </td>
                         <td className="text-right py-3 px-4">{position.quantity}</td>
                         <td className="text-right py-3 px-4">
                           ${position.average_cost_basis.toFixed(2)}
@@ -147,10 +156,10 @@ export function DashboardPage({ user, onNavigate }: DashboardPageProps) {
                         </td>
                         <td
                           className={`text-right py-3 px-4 font-semibold ${
-                            pl >= 0 ? 'text-green-600' : 'text-red-600'
+                            pnl >= 0 ? 'text-green-600' : 'text-red-600'
                           }`}
                         >
-                          ${pl.toFixed(2)} ({plPercent.toFixed(2)}%)
+                          ${pnl.toFixed(2)} ({plPercent.toFixed(2)}%)
                         </td>
                       </tr>
                     );
@@ -189,7 +198,12 @@ export function DashboardPage({ user, onNavigate }: DashboardPageProps) {
                     <div>
                       <p className="font-semibold">{transaction.symbol}</p>
                       <p className="text-sm text-gray-600">
-                        {transaction.type === 'buy' ? 'Buy' : 'Sell'} {transaction.quantity} @
+                        {transaction.type === 'dividend' && (
+                          <span className="text-xs font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded mr-1">
+                            DIV
+                          </span>
+                        )}
+                        {transaction.type === 'buy' ? 'Buy' : transaction.type === 'sell' ? 'Sell' : 'Dividend'} {transaction.quantity} @
                         ${transaction.price.toFixed(2)}
                       </p>
                     </div>

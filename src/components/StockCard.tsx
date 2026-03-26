@@ -1,4 +1,3 @@
-import React from 'react';
 import { useStockPrice } from '../hooks/useStockPrice';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 
