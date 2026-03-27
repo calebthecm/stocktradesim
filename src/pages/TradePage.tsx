@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { User, getOrders, getPortfolios, Order } from '../services/supabase';
 import { getCurrentPrice, getAllStocks } from '../services/marketSimulation';
-import { placeBracketOrder, executeShortOrder, executeCoverOrder, checkAndExecutePendingOrders, TradeResult } from '../services/tradingEngine';
+import { placeBracketOrder, executeSellOrder, executeShortOrder, executeCoverOrder, checkAndExecutePendingOrders, TradeResult } from '../services/tradingEngine';
 import { CandlestickChart } from '../components/CandlestickChart';
 import { DrawingToolbox, DrawingTool } from '../components/DrawingToolbox';
 import { useStockPrice } from '../hooks/useStockPrice';
@@ -31,6 +31,8 @@ export function TradePage({
   const [tpPrice, setTpPrice] = useState<number | null>(null);
   const [slPrice, setSlPrice] = useState<number | null>(null);
   const [entryPrice, setEntryPrice] = useState(0);
+  const [longAction, setLongAction] = useState<'buy' | 'sell'>('buy');
+  const [hasPosition, setHasPosition] = useState(false);
   const [activeTool, setActiveTool] = useState<DrawingTool>('cursor');
   const [orders, setOrders] = useState<Order[]>([]);
   const [error, setError] = useState('');
@@ -47,15 +49,16 @@ export function TradePage({
 
   useEffect(() => {
     const load = async () => {
-      // Check and execute any pending orders that have hit their trigger price
       await checkAndExecutePendingOrders(user);
-      const all = await getOrders(user.id);
+      const [all, ports] = await Promise.all([getOrders(user.id), getPortfolios(user.id)]);
       setOrders(all.filter((o) => o.status === 'pending'));
+      const pos = ports.find((p) => p.symbol === symbol && p.quantity > 0);
+      setHasPosition(!!pos);
     };
     load();
     const id = setInterval(load, 5000);
     return () => clearInterval(id);
-  }, [user]);
+  }, [user, symbol]);
 
   useEffect(() => {
     const check = async () => {
@@ -92,6 +95,7 @@ export function TradePage({
 
   const submitLabel = () => {
     if (tradeMode === 'short') return `SHORT ${symbol}`;
+    if (longAction === 'sell') return `SELL ${symbol}`;
     return `BUY ${symbol}`;
   };
 
@@ -110,6 +114,8 @@ export function TradePage({
       } else {
         result = await executeShortOrder(user, symbol, qty);
       }
+    } else if (longAction === 'sell') {
+      result = await executeSellOrder(user, symbol, qty);
     } else {
       result = await placeBracketOrder(user, symbol, qty, tpPrice, slPrice);
     }
@@ -224,6 +230,29 @@ export function TradePage({
           </button>
         </div>
 
+        {/* Buy / Sell sub-toggle (LONG mode only) */}
+        {tradeMode === 'long' && (
+          <div className="flex rounded overflow-hidden border border-sim-border">
+            <button
+              onClick={() => setLongAction('buy')}
+              className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${
+                longAction === 'buy' ? 'bg-sim-blue/20 text-sim-blue border-r border-sim-border' : 'text-sim-muted hover:text-sim-text border-r border-sim-border'
+              }`}
+            >
+              BUY
+            </button>
+            <button
+              onClick={() => setLongAction('sell')}
+              disabled={!hasPosition}
+              className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${
+                longAction === 'sell' ? 'bg-sim-red/20 text-sim-red' : 'text-sim-muted hover:text-sim-text disabled:opacity-30 disabled:cursor-not-allowed'
+              }`}
+            >
+              SELL
+            </button>
+          </div>
+        )}
+
         <div className="w-px h-5 bg-sim-border" />
 
         {/* Qty */}
@@ -318,9 +347,9 @@ export function TradePage({
           disabled={!marketOpen || isSubmitting || qty <= 0}
           className={`ml-auto px-4 py-1.5 rounded font-black text-[12px] tracking-[0.5px] transition-colors ${
             marketOpen && qty > 0 && !isSubmitting
-              ? tradeMode === 'long'
-                ? 'bg-sim-green text-sim-bg hover:opacity-90'
-                : 'bg-sim-red text-white hover:opacity-90'
+              ? tradeMode === 'short' || (tradeMode === 'long' && longAction === 'sell')
+                ? 'bg-sim-red text-white hover:opacity-90'
+                : 'bg-sim-green text-sim-bg hover:opacity-90'
               : 'bg-sim-hover text-sim-muted cursor-not-allowed'
           }`}
         >

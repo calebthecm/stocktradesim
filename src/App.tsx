@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from './hooks/useAuth';
 import { useSimClock } from './hooks/useSimClock';
 import { DashboardPage } from './pages/DashboardPage';
@@ -6,6 +6,7 @@ import { TradePage } from './pages/TradePage';
 import { LeaderboardPage } from './pages/LeaderboardPage';
 import { LoginDropdown } from './components/LoginDropdown';
 import { NewsTicker } from './components/NewsTicker';
+import { OnboardingModal } from './components/OnboardingModal';
 import { StockCard } from './components/StockCard';
 import { signOut } from './services/supabase';
 import { formatCountdown } from './services/simClock';
@@ -18,9 +19,18 @@ function App() {
   const market = useSimClock();
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
   const [pageParams, setPageParams] = useState<Record<string, unknown>>({});
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  // Track previous user ID so we show onboarding exactly once per login session
+  const lastSeenUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (user) setCurrentPage('dashboard');
+    if (user && lastSeenUserIdRef.current !== user.id) {
+      lastSeenUserIdRef.current = user.id;
+      setShowOnboarding(true);
+      setCurrentPage('dashboard');
+    } else if (!user) {
+      lastSeenUserIdRef.current = null;
+    }
   }, [user]);
 
   const handleNavigate = (page: string, params?: Record<string, unknown>) => {
@@ -114,6 +124,11 @@ function App() {
 
       {/* ── News Ticker ── */}
       <NewsTicker />
+
+      {/* ── Onboarding modal (shown once per login session) ── */}
+      {showOnboarding && user && (
+        <OnboardingModal user={user} onEnter={() => setShowOnboarding(false)} />
+      )}
 
       {/* ── Content ── */}
       <div className="flex-1 overflow-auto">

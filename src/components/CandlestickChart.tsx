@@ -10,7 +10,7 @@ import {
   UTCTimestamp,
   Time,
 } from 'lightweight-charts';
-import { getCandleHistory, getTimeframeMs } from '../services/marketSimulation';
+import { getCandleHistory, getTimeframeMs, getCurrentPrice } from '../services/marketSimulation';
 import { getSimTimeMs } from '../services/simClock';
 import { onSimEvent, SimEvent } from '../services/newsEngine';
 import { subHours, subWeeks, subMonths } from 'date-fns';
@@ -24,10 +24,11 @@ interface CandlestickChartProps {
 
 interface DrawnLine {
   id: string;
-  kind: 'trendline' | 'hline';
+  kind: 'trendline' | 'hline' | 'ray' | 'riskbox' | 'fibonacci' | 'text';
   x1Pct: number; y1: number;
   x2Pct: number; y2: number;
   color: string;
+  label?: string;
 }
 
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo'] as const;
@@ -66,6 +67,8 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
   const [drawnLines, setDrawnLines] = useState<DrawnLine[]>([]);
   const drawStartRef = useRef<{ x: number; y: number } | null>(null);
   const [drawingPreview, setDrawingPreview] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const [pendingText, setPendingText] = useState<{ xPct: number; y: number } | null>(null);
+  const [textInput, setTextInput] = useState('');
 
   const [activeEvent, setActiveEvent] = useState<SimEvent | null>(null);
 
@@ -133,10 +136,10 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
     }
   }, [symbol, timeframe]);
 
-  // Live update: append latest candle every 5 seconds
+  // Live update every 5 seconds: refresh candles and patch last close with news-adjusted price
   useEffect(() => {
     const id = setInterval(() => {
-      if (!seriesRef.current || !chartRef.current) return;
+      if (!seriesRef.current) return;
       const tfMs = getTimeframeMs(timeframe);
       const now = new Date(getSimTimeMs());
       const start = getStartTime(timeframe);
@@ -147,6 +150,18 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
         open: c.open, high: c.high, low: c.low, close: c.close,
       }));
       seriesRef.current.setData(data);
+      // Patch the last candle to match the news-drift-adjusted live price
+      const livePrice = getCurrentPrice(symbol);
+      if (livePrice > 0) {
+        const last = data[data.length - 1];
+        seriesRef.current.update({
+          time: last.time,
+          open: last.open,
+          high: Math.max(last.high as number, livePrice),
+          low: Math.min(last.low as number, livePrice),
+          close: livePrice,
+        });
+      }
     }, 5000);
     return () => clearInterval(id);
   }, [symbol, timeframe]);
@@ -245,7 +260,7 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
       if (overlayRef.current) {
         overlayRef.current.style.cursor = hit ? 'ns-resize' : 'default';
       }
-    } else if (activeTool === 'trendline' && drawStartRef.current) {
+    } else if ((activeTool === 'trendline' || activeTool === 'ray' || activeTool === 'riskbox' || activeTool === 'fibonacci') && drawStartRef.current) {
       if (!overlayRef.current) return;
       const rect = overlayRef.current.getBoundingClientRect();
       setDrawingPreview({
@@ -266,7 +281,7 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
     if (activeTool === 'cursor' || activeTool === 'bracket') {
       dragTarget.current = getDragTarget(e.clientY);
       if (dragTarget.current !== null) setIsDragging(true);
-    } else if (activeTool === 'trendline') {
+    } else if (activeTool === 'trendline' || activeTool === 'ray' || activeTool === 'riskbox' || activeTool === 'fibonacci') {
       if (!overlayRef.current) return;
       const rect = overlayRef.current.getBoundingClientRect();
       drawStartRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -282,6 +297,11 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
       };
       setDrawnLines((prev) => [...prev, newLine]);
       setDrawingPreview(null);
+    } else if (activeTool === 'text') {
+      if (!overlayRef.current) return;
+      const rect = overlayRef.current.getBoundingClientRect();
+      setPendingText({ xPct: ((e.clientX - rect.left) / rect.width) * 100, y: e.clientY - rect.top });
+      setTextInput('');
     } else if (activeTool === 'eraser') {
       setDrawnLines([]);
     }
@@ -292,20 +312,60 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
       onTradeIntent?.(entryPrice, tpPrice, slPrice);
       dragTarget.current = null;
       setIsDragging(false);
-    } else if (activeTool === 'trendline' && drawStartRef.current) {
+    } else if ((activeTool === 'trendline' || activeTool === 'ray' || activeTool === 'riskbox' || activeTool === 'fibonacci') && drawStartRef.current) {
       if (!overlayRef.current) return;
       const rect = overlayRef.current.getBoundingClientRect();
       const x2 = e.clientX - rect.left;
       const y2 = e.clientY - rect.top;
-      const newLine: DrawnLine = {
-        id: `tl-${Date.now()}`,
-        kind: 'trendline',
-        x1Pct: (drawStartRef.current.x / rect.width) * 100,
-        y1: drawStartRef.current.y,
-        x2Pct: (x2 / rect.width) * 100,
-        y2,
-        color: '#f59e0b',
-      };
+
+      let newLine: DrawnLine;
+      if (activeTool === 'trendline') {
+        newLine = {
+          id: `tl-${Date.now()}`,
+          kind: 'trendline',
+          x1Pct: (drawStartRef.current.x / rect.width) * 100,
+          y1: drawStartRef.current.y,
+          x2Pct: (x2 / rect.width) * 100,
+          y2,
+          color: '#f59e0b',
+        };
+      } else if (activeTool === 'ray') {
+        // Extend the line's direction all the way to the right edge
+        const dx = x2 - drawStartRef.current.x;
+        const dy = y2 - drawStartRef.current.y;
+        const y2Ray = dx === 0 ? drawStartRef.current.y : drawStartRef.current.y + (dy / dx) * (rect.width - drawStartRef.current.x);
+        newLine = {
+          id: `ray-${Date.now()}`,
+          kind: 'ray',
+          x1Pct: (drawStartRef.current.x / rect.width) * 100,
+          y1: drawStartRef.current.y,
+          x2Pct: 100,
+          y2: y2Ray,
+          color: '#f59e0b',
+        };
+      } else if (activeTool === 'riskbox') {
+        newLine = {
+          id: `riskbox-${Date.now()}`,
+          kind: 'riskbox',
+          x1Pct: (drawStartRef.current.x / rect.width) * 100,
+          y1: drawStartRef.current.y,
+          x2Pct: (x2 / rect.width) * 100,
+          y2,
+          color: '#ef5350',
+        };
+      } else {
+        // fibonacci
+        newLine = {
+          id: `fib-${Date.now()}`,
+          kind: 'fibonacci',
+          x1Pct: 0,
+          y1: drawStartRef.current.y,
+          x2Pct: 100,
+          y2,
+          color: '#26a69a',
+        };
+      }
+
       setDrawnLines((prev) => [...prev, newLine]);
       drawStartRef.current = null;
       setDrawingPreview(null);
@@ -351,22 +411,79 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
         >
           {/* SVG drawing layer */}
           <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 11 }}>
-            {drawnLines.map((line) => (
-              line.kind === 'trendline' ? (
-                <line
-                  key={line.id}
-                  x1={`${line.x1Pct}%`} y1={line.y1}
-                  x2={`${line.x2Pct}%`} y2={line.y2}
-                  stroke={line.color} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.85"
-                />
-              ) : (
-                <line
-                  key={line.id}
-                  x1="0%" y1={line.y1} x2="100%" y2={line.y2}
-                  stroke={line.color} strokeWidth="1" strokeDasharray="6 4" opacity="0.7"
-                />
-              )
-            ))}
+            {drawnLines.map((line) => {
+              if (line.kind === 'trendline' || line.kind === 'ray') {
+                return (
+                  <line
+                    key={line.id}
+                    x1={`${line.x1Pct}%`} y1={line.y1}
+                    x2={`${line.x2Pct}%`} y2={line.y2}
+                    stroke={line.color} strokeWidth="1.5"
+                    strokeDasharray={line.kind === 'trendline' ? '4 3' : undefined}
+                    opacity="0.85"
+                  />
+                );
+              }
+              if (line.kind === 'hline') {
+                return (
+                  <line
+                    key={line.id}
+                    x1="0%" y1={line.y1} x2="100%" y2={line.y2}
+                    stroke={line.color} strokeWidth="1" strokeDasharray="6 4" opacity="0.7"
+                  />
+                );
+              }
+              if (line.kind === 'riskbox') {
+                return (
+                  <rect
+                    key={line.id}
+                    x={`${Math.min(line.x1Pct, line.x2Pct)}%`}
+                    y={Math.min(line.y1, line.y2)}
+                    width={`${Math.abs(line.x1Pct - line.x2Pct)}%`}
+                    height={Math.abs(line.y1 - line.y2)}
+                    fill="rgba(239, 83, 80, 0.06)"
+                    stroke={line.color}
+                    strokeWidth="1"
+                    opacity="0.8"
+                  />
+                );
+              }
+              if (line.kind === 'fibonacci') {
+                const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 1.0];
+                const FIB_COLORS = ['#ef5350', '#f59e0b', '#26a69a', '#26a69a', '#f59e0b', '#ef5350'];
+                return (
+                  <g key={line.id}>
+                    {FIB_LEVELS.map((ratio, i) => {
+                      const y = line.y1 + ratio * (line.y2 - line.y1);
+                      return (
+                        <g key={i}>
+                          <line x1="0%" y1={y} x2="100%" y2={y} stroke={FIB_COLORS[i]} strokeWidth="0.8" opacity="0.55" />
+                          <text x="4" y={y - 2} fill={FIB_COLORS[i]} fontSize="8" fontFamily="monospace" opacity="0.75">
+                            {(ratio * 100).toFixed(1)}%
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </g>
+                );
+              }
+              if (line.kind === 'text') {
+                return (
+                  <text
+                    key={line.id}
+                    x={`${line.x1Pct}%`}
+                    y={line.y1}
+                    fill={line.color}
+                    fontSize="12"
+                    fontFamily="ui-monospace, SFMono-Regular, monospace"
+                    opacity="0.9"
+                  >
+                    {line.label ?? ''}
+                  </text>
+                );
+              }
+              return null;
+            })}
             {drawingPreview && (
               <line
                 x1={drawingPreview.x1} y1={drawingPreview.y1}
@@ -375,6 +492,36 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
               />
             )}
           </svg>
+          {/* Floating text input for text tool */}
+          {pendingText && (
+            <input
+              autoFocus
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && textInput.trim()) {
+                  setDrawnLines((prev) => [...prev, {
+                    id: `text-${Date.now()}`,
+                    kind: 'text',
+                    x1Pct: pendingText.xPct,
+                    y1: pendingText.y,
+                    x2Pct: pendingText.xPct,
+                    y2: pendingText.y,
+                    color: '#f59e0b',
+                    label: textInput.trim(),
+                  }]);
+                  setPendingText(null);
+                  setTextInput('');
+                } else if (e.key === 'Escape') {
+                  setPendingText(null);
+                  setTextInput('');
+                }
+              }}
+              onBlur={() => { setPendingText(null); setTextInput(''); }}
+              style={{ position: 'absolute', left: `${pendingText.xPct}%`, top: pendingText.y, zIndex: 50 }}
+              className="bg-sim-surface border border-sim-amber text-sim-text font-mono text-xs px-2 py-0.5 outline-none rounded min-w-[80px]"
+            />
+          )}
         </div>
 
         {/* News event popup */}
