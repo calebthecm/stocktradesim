@@ -1,4 +1,3 @@
-import { getSimTimeMs } from './simClock';
 import { getActiveDriftMultiplier } from './newsEngine';
 
 export interface Candle {
@@ -118,7 +117,7 @@ export function getDividendYield(symbol: string): number {
   return STOCKS[symbol.toUpperCase()]?.dividendYield ?? 0;
 }
 
-export function getCurrentPrice(symbol: string, now: Date = new Date(getSimTimeMs())): number {
+export function getCurrentPrice(symbol: string, now: Date = new Date()): number {
   const config = getStockInfo(symbol);
   if (!config) return 0;
 

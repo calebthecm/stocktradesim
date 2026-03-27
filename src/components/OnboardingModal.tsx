@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { User } from '../services/supabase';
-import { getSimTimeMs } from '../services/simClock';
 import { useSimClock } from '../hooks/useSimClock';
 
 interface OnboardingModalProps {
@@ -24,7 +23,7 @@ export function OnboardingModal({ user, onEnter }: OnboardingModalProps) {
     return () => clearTimeout(t);
   }, []);
 
-  const simDate = new Date(getSimTimeMs());
+  const simDate = new Date();
   const timeStr = simDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
   const dateStr = simDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const greeting = simDate.getHours() < 12 ? 'Good morning' : 'Good afternoon';

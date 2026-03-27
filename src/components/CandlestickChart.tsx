@@ -11,7 +11,6 @@ import {
   Time,
 } from 'lightweight-charts';
 import { getCandleHistory, getTimeframeMs, getCurrentPrice } from '../services/marketSimulation';
-import { getSimTimeMs } from '../services/simClock';
 import { onSimEvent, SimEvent } from '../services/newsEngine';
 import { subHours, subWeeks, subMonths } from 'date-fns';
 import { DrawingTool } from './DrawingToolbox';
@@ -34,7 +33,7 @@ interface DrawnLine {
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo'] as const;
 
 function getStartTime(tf: string): Date {
-  const now = new Date(getSimTimeMs());
+  const now = new Date();
   switch (tf) {
     case '1m': case '5m': case '15m': case '1h': return subHours(now, 24);
     case '4h': case '1d': return subWeeks(now, 4);
@@ -121,7 +120,7 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
     if (!seriesRef.current) return;
     const tfMs = getTimeframeMs(timeframe);
     const start = getStartTime(timeframe);
-    const end = new Date(getSimTimeMs());
+    const end = new Date();
     const candles = getCandleHistory(symbol, start, end, tfMs);
     const data: CandlestickData[] = candles.map((c) => ({
       time: Math.floor(c.timestamp / 1000) as UTCTimestamp,
@@ -141,7 +140,7 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
     const id = setInterval(() => {
       if (!seriesRef.current) return;
       const tfMs = getTimeframeMs(timeframe);
-      const now = new Date(getSimTimeMs());
+      const now = new Date();
       const start = getStartTime(timeframe);
       const candles = getCandleHistory(symbol, start, now, tfMs);
       if (candles.length === 0) return;
