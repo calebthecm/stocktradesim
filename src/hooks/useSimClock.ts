@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getMarketStatus, MarketStatus } from '../services/simClock';
+import { getMarketStatus } from '../services/simClock';
+import type { MarketStatus } from '../services/simClock';
 
 export function useSimClock(): MarketStatus {
   const [status, setStatus] = useState<MarketStatus>(() => getMarketStatus());

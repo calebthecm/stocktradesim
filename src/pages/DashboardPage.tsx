@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { User, getPortfolios, getTransactions, Transaction, Portfolio } from '../services/supabase';
+import { getPortfolios, getTransactions } from '../services/supabase';
+import type { User, Transaction, Portfolio } from '../services/supabase';
 import { getCurrentPrice, getAllStocks } from '../services/marketSimulation';
 import { creditDividends } from '../services/tradingEngine';
 import { StockCard } from '../components/StockCard';

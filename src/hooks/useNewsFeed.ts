@@ -3,8 +3,10 @@
 // stream consumed by NewsTicker. Starts the news engine on mount.
 
 import { useState, useEffect } from 'react';
-import { fetchRealHeadlines, RealHeadline } from '../services/newsService';
-import { onSimEvent, startNewsEngine, SimEvent } from '../services/newsEngine';
+import { fetchRealHeadlines } from '../services/newsService';
+import type { RealHeadline } from '../services/newsService';
+import { onSimEvent, startNewsEngine } from '../services/newsEngine';
+import type { SimEvent } from '../services/newsEngine';
 
 export interface TickerItem {
   id: string;

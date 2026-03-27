@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { User, getOrders, getPortfolios, Order } from '../services/supabase';
+import { getOrders, getPortfolios } from '../services/supabase';
+import type { User, Order } from '../services/supabase';
 import { getCurrentPrice, getAllStocks } from '../services/marketSimulation';
-import { placeBracketOrder, executeSellOrder, executeShortOrder, executeCoverOrder, checkAndExecutePendingOrders, TradeResult } from '../services/tradingEngine';
+import { placeBracketOrder, executeSellOrder, executeShortOrder, executeCoverOrder, checkAndExecutePendingOrders } from '../services/tradingEngine';
+import type { TradeResult } from '../services/tradingEngine';
 import { CandlestickChart } from '../components/CandlestickChart';
-import { DrawingToolbox, DrawingTool } from '../components/DrawingToolbox';
+import { DrawingToolbox } from '../components/DrawingToolbox';
+import type { DrawingTool } from '../components/DrawingToolbox';
 import { useStockPrice } from '../hooks/useStockPrice';
 
 interface TradePageProps {

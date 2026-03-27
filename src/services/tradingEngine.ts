@@ -9,10 +9,8 @@ import {
   createOrder,
   getOrders,
   cancelBracketSiblings,
-  User,
-  Order,
-  Portfolio,
 } from './supabase';
+import type { User, Order, Portfolio } from './supabase';
 
 export interface TradeResult {
   success: boolean;

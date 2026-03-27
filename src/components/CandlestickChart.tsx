@@ -1,19 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import {
-  createChart,
-  IChartApi,
-  ISeriesApi,
-  CandlestickData,
-  CandlestickSeries,
-  LineStyle,
-  IPriceLine,
-  UTCTimestamp,
-  Time,
-} from 'lightweight-charts';
+import { createChart, CandlestickSeries, LineStyle } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, CandlestickData, IPriceLine, UTCTimestamp, Time } from 'lightweight-charts';
 import { getCandleHistory, getTimeframeMs, getCurrentPrice } from '../services/marketSimulation';
-import { onSimEvent, SimEvent } from '../services/newsEngine';
+import { onSimEvent } from '../services/newsEngine';
+import type { SimEvent } from '../services/newsEngine';
 import { subHours, subWeeks, subMonths } from 'date-fns';
-import { DrawingTool } from './DrawingToolbox';
+import type { DrawingTool } from './DrawingToolbox';
 
 interface CandlestickChartProps {
   symbol: string;

@@ -2,7 +2,8 @@
 // A 24px tall strip that scrolls headlines left continuously.
 // Sim events are shown with an amber ⚡ badge; real news with a blue source tag.
 
-import { useNewsFeed, TickerItem } from '../hooks/useNewsFeed';
+import { useNewsFeed } from '../hooks/useNewsFeed';
+import type { TickerItem } from '../hooks/useNewsFeed';
 
 function TickerItemView({ item }: { item: TickerItem }) {
   if (item.kind === 'sim') {

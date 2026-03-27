@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { User } from '../services/supabase';
+import type { User } from '../services/supabase';
 import { useSimClock } from '../hooks/useSimClock';
 
 interface OnboardingModalProps {

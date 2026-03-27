@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { User, getLeaderboardData, LeaderboardEntry } from '../services/supabase';
+import { getLeaderboardData } from '../services/supabase';
+import type { User, LeaderboardEntry } from '../services/supabase';
 import { getCurrentPrice } from '../services/marketSimulation';
 
 interface LeaderboardPageProps {
