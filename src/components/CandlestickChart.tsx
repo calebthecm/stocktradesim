@@ -35,11 +35,15 @@ const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo'] as const;
 function getStartTime(tf: string): Date {
   const now = new Date();
   switch (tf) {
-    case '1m': case '5m': case '15m': case '1h': return subHours(now, 24);
-    case '4h': case '1d': return subWeeks(now, 4);
-    case '1w': return subMonths(now, 12);
-    case '1mo': return subMonths(now, 36);
-    default: return subWeeks(now, 4);
+    case '1m':  return subHours(now, 6);      // ~360 candles
+    case '5m':  return subHours(now, 24);     // ~288 candles
+    case '15m': return subHours(now, 72);     // ~288 candles
+    case '1h':  return subWeeks(now, 12);     // ~504 candles (12 wks × 5d × 8.4h)
+    case '4h':  return subMonths(now, 6);     // ~195 candles
+    case '1d':  return subMonths(now, 24);    // ~504 candles
+    case '1w':  return subMonths(now, 48);    // ~192 candles
+    case '1mo': return subMonths(now, 120);   // 120 candles
+    default:    return subMonths(now, 24);
   }
 }
 

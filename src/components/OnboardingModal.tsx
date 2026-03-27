@@ -13,6 +13,13 @@ const BRIEFING_ITEMS = [
   { symbol: 'AAPL', headline: 'New product cycle begins — supply chain checks positive', impact: '+' },
 ];
 
+const BILLS = [
+  { label: 'Rent',         amount: 2_200, due: 'Due in 3 days' },
+  { label: 'Groceries',    amount: 180,   due: 'Weekly' },
+  { label: 'Electric',     amount: 95,    due: 'Due today' },
+  { label: 'Internet',     amount: 60,    due: 'Due this week' },
+];
+
 export function OnboardingModal({ user, onEnter }: OnboardingModalProps) {
   const market = useSimClock();
   const [visible, setVisible] = useState(false);
@@ -78,19 +85,43 @@ export function OnboardingModal({ user, onEnter }: OnboardingModalProps) {
         </div>
       </div>
 
-      {/* Today's briefing */}
-      <div className="w-full max-w-xl mb-8">
-        <p className="text-[9px] font-black text-sim-muted tracking-[2px] uppercase mb-3">Today's Briefing</p>
-        <div className="flex flex-col gap-2">
-          {BRIEFING_ITEMS.map((item) => (
-            <div key={item.symbol} className="flex items-start gap-3 py-2 border-b border-sim-border/50">
-              <span className="text-[10px] font-black font-mono text-sim-text w-12 flex-shrink-0 mt-0.5">{item.symbol}</span>
-              <span className="text-[11px] text-sim-muted leading-snug flex-1">{item.headline}</span>
-              <span className={`text-[10px] font-bold flex-shrink-0 mt-0.5 ${item.impact === '+' ? 'text-sim-green' : 'text-sim-red'}`}>
-                {item.impact === '+' ? '▲' : '▼'}
-              </span>
-            </div>
-          ))}
+      {/* Two-column: briefing + bills */}
+      <div className="w-full max-w-xl mb-8 flex gap-5">
+        {/* Today's briefing */}
+        <div className="flex-1 min-w-0">
+          <p className="text-[9px] font-black text-sim-muted tracking-[2px] uppercase mb-3">Today's Briefing</p>
+          <div className="flex flex-col gap-1.5">
+            {BRIEFING_ITEMS.map((item) => (
+              <div key={item.symbol} className="flex items-start gap-2 py-1.5 border-b border-sim-border/50">
+                <span className="text-[10px] font-black font-mono text-sim-text w-10 flex-shrink-0 mt-0.5">{item.symbol}</span>
+                <span className="text-[10px] text-sim-muted leading-snug flex-1">{item.headline}</span>
+                <span className={`text-[10px] font-bold flex-shrink-0 mt-0.5 ${item.impact === '+' ? 'text-sim-green' : 'text-sim-red'}`}>
+                  {item.impact === '+' ? '▲' : '▼'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Bills & expenses */}
+        <div className="w-[160px] flex-shrink-0">
+          <p className="text-[9px] font-black text-sim-muted tracking-[2px] uppercase mb-3">Bills &amp; Expenses</p>
+          <div className="flex flex-col gap-1.5">
+            {BILLS.map((bill) => (
+              <div key={bill.label} className="flex items-center justify-between py-1.5 border-b border-sim-border/50">
+                <div>
+                  <p className="text-[10px] font-semibold text-sim-text leading-none">{bill.label}</p>
+                  <p className="text-[9px] text-sim-muted mt-0.5">{bill.due}</p>
+                </div>
+                <span className="text-[10px] font-mono font-bold text-sim-red">
+                  −${bill.amount.toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[8px] text-sim-muted mt-2 leading-snug opacity-60">
+            Storyline expenses coming soon
+          </p>
         </div>
       </div>
 
