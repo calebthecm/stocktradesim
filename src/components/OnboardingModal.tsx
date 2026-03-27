@@ -14,17 +14,16 @@ const BRIEFING_ITEMS = [
 ];
 
 const BILLS = [
-  { label: 'Rent',         amount: 2_200, due: 'Due in 3 days' },
-  { label: 'Groceries',    amount: 180,   due: 'Weekly' },
-  { label: 'Electric',     amount: 95,    due: 'Due today' },
-  { label: 'Internet',     amount: 60,    due: 'Due this week' },
+  { label: 'Rent',      amount: 2_200, due: 'Due in 3 days' },
+  { label: 'Groceries', amount: 180,   due: 'Weekly' },
+  { label: 'Electric',  amount: 95,    due: 'Due today' },
+  { label: 'Internet',  amount: 60,    due: 'Due this week' },
 ];
 
 export function OnboardingModal({ user, onEnter }: OnboardingModalProps) {
   const market = useSimClock();
   const [visible, setVisible] = useState(false);
 
-  // Fade in after mount
   useEffect(() => {
     const t = setTimeout(() => setVisible(true), 60);
     return () => clearTimeout(t);
@@ -42,7 +41,6 @@ export function OnboardingModal({ user, onEnter }: OnboardingModalProps) {
       className="fixed inset-0 bg-sim-bg z-50 flex flex-col items-center justify-center px-6"
       style={{ transition: 'opacity 0.4s', opacity: visible ? 1 : 0 }}
     >
-      {/* Terminal header */}
       <div className="w-full max-w-xl mb-8">
         <div className="flex items-center justify-between mb-1">
           <span className="text-[9px] font-black text-sim-muted tracking-[2px] uppercase">
@@ -53,7 +51,6 @@ export function OnboardingModal({ user, onEnter }: OnboardingModalProps) {
         <div className="h-px bg-sim-border" />
       </div>
 
-      {/* Greeting block */}
       <div className="w-full max-w-xl mb-8">
         <p className="text-[11px] font-bold text-sim-muted tracking-[1.5px] uppercase mb-2">{dateStr}</p>
         <h1 className="text-3xl font-black text-sim-text leading-tight mb-1">
@@ -68,7 +65,6 @@ export function OnboardingModal({ user, onEnter }: OnboardingModalProps) {
         </p>
       </div>
 
-      {/* Market status pill */}
       <div className="w-full max-w-xl mb-6">
         <div
           className={`inline-flex items-center gap-2 px-3 py-1.5 rounded border text-[10px] font-bold tracking-[0.5px] ${
@@ -85,9 +81,7 @@ export function OnboardingModal({ user, onEnter }: OnboardingModalProps) {
         </div>
       </div>
 
-      {/* Two-column: briefing + bills */}
       <div className="w-full max-w-xl mb-8 flex gap-5">
-        {/* Today's briefing */}
         <div className="flex-1 min-w-0">
           <p className="text-[9px] font-black text-sim-muted tracking-[2px] uppercase mb-3">Today's Briefing</p>
           <div className="flex flex-col gap-1.5">
@@ -103,7 +97,6 @@ export function OnboardingModal({ user, onEnter }: OnboardingModalProps) {
           </div>
         </div>
 
-        {/* Bills & expenses */}
         <div className="w-[160px] flex-shrink-0">
           <p className="text-[9px] font-black text-sim-muted tracking-[2px] uppercase mb-3">Bills &amp; Expenses</p>
           <div className="flex flex-col gap-1.5">
@@ -125,7 +118,6 @@ export function OnboardingModal({ user, onEnter }: OnboardingModalProps) {
         </div>
       </div>
 
-      {/* CTA */}
       <div className="w-full max-w-xl">
         <button
           onClick={onEnter}

@@ -12,16 +12,15 @@ export interface TickerItem {
   id: string;
   kind: 'real' | 'sim';
   text: string;
-  source?: string;   // real only: e.g. "REUTERS"
-  symbol?: string;   // sim only: e.g. "AAPL"
-  impact?: number;   // sim only: signed fraction
+  source?: string;
+  symbol?: string;
+  impact?: number;
 }
 
 export function useNewsFeed(): TickerItem[] {
   const [realItems, setRealItems] = useState<TickerItem[]>([]);
   const [simItems, setSimItems] = useState<TickerItem[]>([]);
 
-  // Fetch real headlines on mount and refresh every 5 min
   useEffect(() => {
     startNewsEngine();
 
@@ -46,7 +45,6 @@ export function useNewsFeed(): TickerItem[] {
     };
   }, []);
 
-  // Listen for sim events — prepend to simItems (keep latest 10)
   useEffect(() => {
     return onSimEvent((event: SimEvent) => {
       const item: TickerItem = {
@@ -60,7 +58,6 @@ export function useNewsFeed(): TickerItem[] {
     });
   }, []);
 
-  // Interleave: one sim event between every two real headlines
   const merged: TickerItem[] = [];
   let ri = 0;
   let si = 0;

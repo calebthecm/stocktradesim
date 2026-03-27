@@ -33,25 +33,19 @@ export function NewsTicker() {
 
   if (items.length === 0) return null;
 
-  // Duplicate items for seamless loop
   const doubled = [...items, ...items];
 
   return (
     <div className="h-[26px] bg-sim-surface border-b border-sim-border flex items-center overflow-hidden flex-shrink-0">
-      {/* Label */}
       <div className="flex-shrink-0 px-3 h-full flex items-center border-r border-sim-border">
         <span className="text-[8px] font-black tracking-[1.5px] text-sim-muted">
           📡 <span className="text-sim-amber">LIVE</span>
         </span>
       </div>
-
-      {/* Scrolling track */}
       <div className="overflow-hidden flex-1 relative">
         <div
           className="flex items-center gap-8 whitespace-nowrap"
-          style={{
-            animation: `ticker-scroll ${items.length * 4}s linear infinite`,
-          }}
+          style={{ animation: `ticker-scroll ${items.length * 4}s linear infinite` }}
         >
           {doubled.map((item, i) => (
             <span key={`${item.id}-${i}`} className="flex items-center gap-8">
@@ -61,7 +55,6 @@ export function NewsTicker() {
           ))}
         </div>
       </div>
-
       <style>{`
         @keyframes ticker-scroll {
           0%   { transform: translateX(0); }
