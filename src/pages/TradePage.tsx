@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { User, getOrders, getPortfolios, Order } from '../services/supabase';
 import { getCurrentPrice, getAllStocks } from '../services/marketSimulation';
-import { placeBracketOrder, executeShortOrder, executeCoverOrder, TradeResult } from '../services/tradingEngine';
+import { placeBracketOrder, executeShortOrder, executeCoverOrder, checkAndExecutePendingOrders, TradeResult } from '../services/tradingEngine';
 import { CandlestickChart } from '../components/CandlestickChart';
 import { DrawingToolbox, DrawingTool } from '../components/DrawingToolbox';
 import { useStockPrice } from '../hooks/useStockPrice';
@@ -47,6 +47,8 @@ export function TradePage({
 
   useEffect(() => {
     const load = async () => {
+      // Check and execute any pending orders that have hit their trigger price
+      await checkAndExecutePendingOrders(user);
       const all = await getOrders(user.id);
       setOrders(all.filter((o) => o.status === 'pending'));
     };

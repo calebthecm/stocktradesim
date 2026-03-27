@@ -61,6 +61,7 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
   const [slPrice, setSlPrice] = useState<number | null>(null);
 
   const dragTarget = useRef<'entry' | 'tp' | 'sl' | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const [drawnLines, setDrawnLines] = useState<DrawnLine[]>([]);
   const drawStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -124,11 +125,30 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
       open: c.open, high: c.high, low: c.low, close: c.close,
     }));
     seriesRef.current.setData(data);
+    chartRef.current?.timeScale().fitContent();
 
     if (data.length > 0) {
       const last = data[data.length - 1].close as number;
       setEntryPrice(last);
     }
+  }, [symbol, timeframe]);
+
+  // Live update: append latest candle every 5 seconds
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!seriesRef.current || !chartRef.current) return;
+      const tfMs = getTimeframeMs(timeframe);
+      const now = new Date(getSimTimeMs());
+      const start = getStartTime(timeframe);
+      const candles = getCandleHistory(symbol, start, now, tfMs);
+      if (candles.length === 0) return;
+      const data: CandlestickData[] = candles.map((c) => ({
+        time: Math.floor(c.timestamp / 1000) as UTCTimestamp,
+        open: c.open, high: c.high, low: c.low, close: c.close,
+      }));
+      seriesRef.current.setData(data);
+    }, 5000);
+    return () => clearInterval(id);
   }, [symbol, timeframe]);
 
   useEffect(() => {
@@ -245,6 +265,7 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (activeTool === 'cursor' || activeTool === 'bracket') {
       dragTarget.current = getDragTarget(e.clientY);
+      if (dragTarget.current !== null) setIsDragging(true);
     } else if (activeTool === 'trendline') {
       if (!overlayRef.current) return;
       const rect = overlayRef.current.getBoundingClientRect();
@@ -270,6 +291,7 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
     if (dragTarget.current) {
       onTradeIntent?.(entryPrice, tpPrice, slPrice);
       dragTarget.current = null;
+      setIsDragging(false);
     } else if (activeTool === 'trendline' && drawStartRef.current) {
       if (!overlayRef.current) return;
       const rect = overlayRef.current.getBoundingClientRect();
@@ -321,11 +343,11 @@ export function CandlestickChart({ symbol, activeTool = 'cursor', onTradeIntent 
         <div
           ref={overlayRef}
           className="absolute inset-0"
-          style={{ zIndex: 10 }}
+          style={{ zIndex: 10, pointerEvents: (activeTool !== 'cursor' || isDragging) ? 'auto' : 'none' }}
           onMouseMove={handleMouseMove}
           onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
-          onMouseLeave={() => { dragTarget.current = null; setDrawingPreview(null); }}
+          onMouseLeave={() => { dragTarget.current = null; setIsDragging(false); setDrawingPreview(null); }}
         >
           {/* SVG drawing layer */}
           <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 11 }}>

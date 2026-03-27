@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { User, getPortfolios, getTransactions, Transaction, Portfolio } from '../services/supabase';
 import { getCurrentPrice, getAllStocks } from '../services/marketSimulation';
+import { creditDividends } from '../services/tradingEngine';
 import { StockCard } from '../components/StockCard';
 
 interface DashboardPageProps {
@@ -21,6 +22,11 @@ export function DashboardPage({ user, onNavigate }: DashboardPageProps) {
         getPortfolios(user.id),
         getTransactions(user.id),
       ]);
+
+      // Credit any due dividends
+      if (portData.length > 0) {
+        await creditDividends(user, portData);
+      }
 
       let value = 0;
       for (const pos of portData) {
