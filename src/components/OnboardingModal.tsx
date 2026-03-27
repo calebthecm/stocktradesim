@@ -58,7 +58,7 @@ export function OnboardingModal({ user, onEnter }: OnboardingModalProps) {
         </h1>
         <p className="text-sim-muted text-sm leading-relaxed">
           {market.isOpen
-            ? `The NYSE is open. Your starting capital is `
+            ? `The market is open. Your starting capital is `
             : `The market opens in ${Math.floor(market.secondsRemaining / 60)}m. Your starting capital is `}
           <span className="text-sim-green font-bold font-mono">{balance}</span>.
           {' '}No excuses. No do-overs.

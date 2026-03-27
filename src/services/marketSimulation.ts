@@ -21,19 +21,21 @@ interface StockConfig {
 
 const TRADING_DAYS_PER_YEAR = 252;
 
+// Base prices reflect approximate real-world values as of Jan 1 2026.
+// mu values are realistic annualized expected returns (not hyped-up).
 const STOCKS: Record<string, StockConfig> = {
-  AAPL:  { symbol: 'AAPL',  name: 'Apple Inc.',              basePrice: 182,  mu: 0.22,  sigma: 0.28, sector: 'Technology',    dividendYield: 0.005 },
-  MSFT:  { symbol: 'MSFT',  name: 'Microsoft Corporation',   basePrice: 415,  mu: 0.20,  sigma: 0.25, sector: 'Technology',    dividendYield: 0.007 },
-  NVDA:  { symbol: 'NVDA',  name: 'NVIDIA Corporation',      basePrice: 875,  mu: 0.45,  sigma: 0.60, sector: 'Technology',    dividendYield: 0 },
-  TSLA:  { symbol: 'TSLA',  name: 'Tesla Inc.',              basePrice: 245,  mu: 0.30,  sigma: 0.55, sector: 'Automotive',    dividendYield: 0 },
-  AMZN:  { symbol: 'AMZN',  name: 'Amazon.com Inc.',         basePrice: 195,  mu: 0.25,  sigma: 0.32, sector: 'Consumer',      dividendYield: 0 },
-  GOOGL: { symbol: 'GOOGL', name: 'Alphabet Inc.',           basePrice: 175,  mu: 0.18,  sigma: 0.28, sector: 'Technology',    dividendYield: 0 },
-  META:  { symbol: 'META',  name: 'Meta Platforms Inc.',     basePrice: 520,  mu: 0.35,  sigma: 0.40, sector: 'Technology',    dividendYield: 0 },
-  NFLX:  { symbol: 'NFLX',  name: 'Netflix Inc.',            basePrice: 680,  mu: 0.20,  sigma: 0.38, sector: 'Entertainment', dividendYield: 0 },
-  AMD:   { symbol: 'AMD',   name: 'Advanced Micro Devices',  basePrice: 165,  mu: 0.40,  sigma: 0.58, sector: 'Technology',    dividendYield: 0 },
-  BABA:  { symbol: 'BABA',  name: 'Alibaba Group',           basePrice: 78,   mu: -0.05, sigma: 0.45, sector: 'Consumer',      dividendYield: 0 },
-  JPM:   { symbol: 'JPM',   name: 'JPMorgan Chase',          basePrice: 210,  mu: 0.14,  sigma: 0.22, sector: 'Finance',       dividendYield: 0.009 },
-  COIN:  { symbol: 'COIN',  name: 'Coinbase Global',         basePrice: 225,  mu: 0.50,  sigma: 0.90, sector: 'Fintech',       dividendYield: 0 },
+  AAPL:  { symbol: 'AAPL',  name: 'Apple Inc.',              basePrice: 243,  mu: 0.12,  sigma: 0.28, sector: 'Technology',    dividendYield: 0.005 },
+  MSFT:  { symbol: 'MSFT',  name: 'Microsoft Corporation',   basePrice: 432,  mu: 0.10,  sigma: 0.25, sector: 'Technology',    dividendYield: 0.007 },
+  NVDA:  { symbol: 'NVDA',  name: 'NVIDIA Corporation',      basePrice: 137,  mu: 0.30,  sigma: 0.60, sector: 'Technology',    dividendYield: 0 },
+  TSLA:  { symbol: 'TSLA',  name: 'Tesla Inc.',              basePrice: 403,  mu: 0.15,  sigma: 0.55, sector: 'Automotive',    dividendYield: 0 },
+  AMZN:  { symbol: 'AMZN',  name: 'Amazon.com Inc.',         basePrice: 226,  mu: 0.14,  sigma: 0.32, sector: 'Consumer',      dividendYield: 0 },
+  GOOGL: { symbol: 'GOOGL', name: 'Alphabet Inc.',           basePrice: 197,  mu: 0.10,  sigma: 0.28, sector: 'Technology',    dividendYield: 0 },
+  META:  { symbol: 'META',  name: 'Meta Platforms Inc.',     basePrice: 603,  mu: 0.20,  sigma: 0.40, sector: 'Technology',    dividendYield: 0 },
+  NFLX:  { symbol: 'NFLX',  name: 'Netflix Inc.',            basePrice: 892,  mu: 0.12,  sigma: 0.38, sector: 'Entertainment', dividendYield: 0 },
+  AMD:   { symbol: 'AMD',   name: 'Advanced Micro Devices',  basePrice: 122,  mu: 0.20,  sigma: 0.58, sector: 'Technology',    dividendYield: 0 },
+  BABA:  { symbol: 'BABA',  name: 'Alibaba Group',           basePrice: 88,   mu: -0.05, sigma: 0.45, sector: 'Consumer',      dividendYield: 0 },
+  JPM:   { symbol: 'JPM',   name: 'JPMorgan Chase',          basePrice: 249,  mu: 0.09,  sigma: 0.22, sector: 'Finance',       dividendYield: 0.009 },
+  COIN:  { symbol: 'COIN',  name: 'Coinbase Global',         basePrice: 282,  mu: 0.35,  sigma: 0.90, sector: 'Fintech',       dividendYield: 0 },
 };
 
 // Deterministic seeded PRNG (LCG)
@@ -81,9 +83,9 @@ function dtForTimeframe(timeframeMs: number): number {
   return tradingDays / TRADING_DAYS_PER_YEAR;
 }
 
-// The simulation starts drifting prices from this calendar day (Jan 1 2023).
-// basePrice values are the prices as of epoch day; they drift from there.
-const SIM_EPOCH_DAY = Math.floor(Date.UTC(2023, 0, 1) / 86_400_000);
+// The simulation starts drifting prices from this calendar day (Jan 1 2026).
+// basePrice values reflect approximate real-world prices as of that date.
+const SIM_EPOCH_DAY = Math.floor(Date.UTC(2026, 0, 1) / 86_400_000);
 
 // Build price history using GBM + GARCH-lite vol clustering.
 // seedOffset shifts all candle seeds into absolute time so each calendar
