@@ -153,10 +153,40 @@ export function getDividendYield(symbol: string): number {
 export function getCurrentPrice(symbol: string, now: Date = new Date()): number {
   const config = getStockInfo(symbol);
   if (!config) return 0;
-  const dayIdx = Math.floor(now.getTime() / 86_400_000);
-  const base = getDailyPrice(config, dayIdx);
-  const drifted = base * getActiveDriftMultiplier(symbol.toUpperCase());
-  return Math.round(drifted * 100) / 100;
+
+  const nowMs = now.getTime();
+  const dayIdx = Math.floor(nowMs / 86_400_000);
+  const dayStartMs = dayIdx * 86_400_000;
+
+  // Anchor: today's opening price (GBM walk from SIM_EPOCH_DAY, at most ~90 steps)
+  const dayOpen = getDailyPrice(config, dayIdx);
+
+  // Level 1 — intraday minute walk (up to 1440 steps, consistent with 1m chart seeds)
+  const absMinuteIdx = Math.floor(nowMs / 60_000);
+  const dayStartMinuteIdx = Math.floor(dayStartMs / 60_000);
+  const minutesElapsed = absMinuteIdx - dayStartMinuteIdx;
+
+  const dtMin = TRADING_DAYS_PER_CANDLE[60_000] / TRADING_DAYS_PER_YEAR;
+  let minutePrice = dayOpen;
+  if (minutesElapsed > 0) {
+    const mp = buildPriceHistory(config, minutesElapsed + 1, dtMin, dayStartMinuteIdx, dayOpen);
+    minutePrice = mp[mp.length - 1];
+  }
+
+  // Level 2 — sub-minute second walk (up to 59 steps) for live tick feel
+  const absSecondIdx = Math.floor(nowMs / 1_000);
+  const minuteStartSecondIdx = absMinuteIdx * 60;
+  const secondsElapsed = absSecondIdx - minuteStartSecondIdx;
+
+  let livePrice = minutePrice;
+  if (secondsElapsed > 0) {
+    const dtSec = dtMin / 60; // 1 second = 1/60 of a minute
+    // Seed offset 600_000 avoids collisions with minute-level seeds
+    const sp = buildPriceHistory(config, secondsElapsed + 1, dtSec, minuteStartSecondIdx + 600_000, minutePrice);
+    livePrice = sp[sp.length - 1];
+  }
+
+  return Math.round(livePrice * getActiveDriftMultiplier(symbol.toUpperCase()) * 100) / 100;
 }
 
 export function getCandleHistory(
