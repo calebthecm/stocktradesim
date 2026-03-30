@@ -24,18 +24,25 @@ interface DrawnLine {
 
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo'] as const;
 
+// Simulation epoch — prices start drifting from base values on this date.
+// Chart windows must not go before this date or the candle GBM path diverges
+// from getCurrentPrice (which also anchors at the epoch).
+const SIM_EPOCH = new Date(Date.UTC(2026, 0, 1));
+
 function getStartTime(tf: string): Date {
   const now = new Date();
+  // Clamp any date that would fall before the simulation epoch
+  const clamp = (d: Date): Date => (d < SIM_EPOCH ? SIM_EPOCH : d);
   switch (tf) {
-    case '1m':  return subHours(now, 6);      // ~360 candles
-    case '5m':  return subHours(now, 24);     // ~288 candles
-    case '15m': return subHours(now, 72);     // ~288 candles
-    case '1h':  return subWeeks(now, 12);     // ~504 candles (12 wks × 5d × 8.4h)
-    case '4h':  return subMonths(now, 6);     // ~195 candles
-    case '1d':  return subMonths(now, 24);    // ~504 candles
-    case '1w':  return subMonths(now, 48);    // ~192 candles
-    case '1mo': return subMonths(now, 120);   // 120 candles
-    default:    return subMonths(now, 24);
+    case '1m':  return subHours(now, 6);             // ~360 candles
+    case '5m':  return subHours(now, 24);            // ~288 candles
+    case '15m': return subHours(now, 72);            // ~288 candles
+    case '1h':  return clamp(subWeeks(now, 12));     // post-epoch (~89d = ~534 1h candles)
+    case '4h':  return clamp(subMonths(now, 6));     // clamped to epoch
+    case '1d':  return clamp(subMonths(now, 24));    // clamped to epoch (~89 candles)
+    case '1w':  return clamp(subMonths(now, 48));    // clamped to epoch
+    case '1mo': return clamp(subMonths(now, 120));   // clamped to epoch
+    default:    return SIM_EPOCH;
   }
 }
 

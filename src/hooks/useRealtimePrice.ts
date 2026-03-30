@@ -61,7 +61,10 @@ export function useRealtimePrice(symbol: string) {
         setDayLow(Number(data.day_low));
       });
 
-    // Subscribe to Realtime row-level updates for this symbol
+    // Subscribe to Realtime row-level updates for this symbol.
+    // @ts-expect-error — supabase-js v2 needs generated Database types for
+    // 'postgres_changes' to resolve the correct overload; without them it falls
+    // through to the 'system' overload. Runtime behaviour is correct.
     const channel = supabase
       .channel(`market_prices:${symbol}`)
       .on(
@@ -72,9 +75,9 @@ export function useRealtimePrice(symbol: string) {
           table: 'market_prices',
           filter: `symbol=eq.${symbol}`,
         },
-        (payload: { new: MarketPriceRow }) => {
-          const row = payload.new;
-          if (!row) return;
+        (payload: { new: Record<string, unknown> }) => {
+          const row = payload.new as MarketPriceRow;
+          if (!row?.price) return;
           setPrice(Number(row.price));
           setDayOpen(Number(row.day_open));
           setDayHigh(Number(row.day_high));

@@ -43,7 +43,7 @@ export function TradePage({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [shortWarning, setShortWarning] = useState(false);
 
-  const { price } = useStockPrice(symbol, 1000);
+  const { price } = useStockPrice(symbol);
   const stocks = getAllStocks();
 
   useEffect(() => {
