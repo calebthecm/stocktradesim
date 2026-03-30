@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { getCurrentPrice } from '../services/marketSimulation';
+import { useState, useEffect } from 'react';
+import { getCurrentPrice, getDayOpen, getDayIntradayPrices } from '../services/marketSimulation';
 
 interface StockCardProps {
   symbol: string;
@@ -7,50 +7,49 @@ interface StockCardProps {
   onSelect?: (symbol: string) => void;
 }
 
-const SAMPLE_COUNT = 30;
-
 export function StockCard({ symbol, name, onSelect }: StockCardProps) {
   const [price, setPrice] = useState(0);
-  const [openPrice, setOpenPrice] = useState(0);
-  const samplesRef = useRef<number[]>([]);
+  const [intradayPrices, setIntradayPrices] = useState<number[]>([]);
+
+  // Deterministic for the day — no state needed, safe to call in render
+  const dayOpen = getDayOpen(symbol);
 
   useEffect(() => {
-    const tick = () => {
-      const p = getCurrentPrice(symbol);
-      setPrice(p);
-      samplesRef.current = [...samplesRef.current, p].slice(-SAMPLE_COUNT);
-      if (samplesRef.current.length === 1) setOpenPrice(p);
-    };
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
+    const tickPrice = () => setPrice(getCurrentPrice(symbol));
+    const tickSparkline = () => setIntradayPrices(getDayIntradayPrices(symbol));
+
+    tickPrice();
+    tickSparkline();
+
+    const priceId = setInterval(tickPrice, 1000);
+    const sparklineId = setInterval(tickSparkline, 5000);
+    return () => { clearInterval(priceId); clearInterval(sparklineId); };
   }, [symbol]);
 
-  useEffect(() => {
-    const p = getCurrentPrice(symbol);
-    setOpenPrice(p);
-  }, [symbol]);
+  // Replace last intraday sample with current live price
+  const samples = intradayPrices.length >= 2
+    ? [...intradayPrices.slice(0, -1), price]
+    : [dayOpen, price];
 
-  const samples = samplesRef.current.length >= 2 ? samplesRef.current : [price, price];
-  const minP = Math.min(...samples);
-  const maxP = Math.max(...samples);
-  const range = maxP - minP || 1;
-  const isUp = price >= openPrice;
+  const dayHigh = Math.max(...samples);
+  const dayLow = Math.min(...samples);
+  const changePct = dayOpen > 0 ? ((price - dayOpen) / dayOpen) * 100 : 0;
+  const changeDollar = price - dayOpen;
+  const isUp = changePct >= 0;
+  const color = isUp ? '#26a69a' : '#ef5350';
 
-  const changePct = openPrice > 0 ? ((price - openPrice) / openPrice) * 100 : 0;
-
-  // Build SVG polyline points
   const w = 100;
-  const h = 32;
+  const h = 26;
+  const minP = dayLow;
+  const maxP = dayHigh;
+  const range = maxP - minP || 1;
   const points = samples
     .map((p, i) => {
-      const x = (i / (samples.length - 1)) * w;
+      const x = (i / Math.max(samples.length - 1, 1)) * w;
       const y = h - ((p - minP) / range) * h;
       return `${x},${y}`;
     })
     .join(' ');
-
-  const color = isUp ? '#26a69a' : '#ef5350';
   const gradId = `grad-${symbol}`;
 
   return (
@@ -60,33 +59,40 @@ export function StockCard({ symbol, name, onSelect }: StockCardProps) {
         onSelect ? 'cursor-pointer' : ''
       }`}
     >
-      <div className="flex items-start justify-between mb-1">
+      <div className="flex items-start justify-between mb-0.5">
         <div>
           <div className="text-[12px] font-black text-sim-text">{symbol}</div>
-          <div className="text-[9px] text-sim-muted truncate max-w-[80px]">{name}</div>
+          <div className="text-[9px] text-sim-muted truncate max-w-[85px]">{name}</div>
         </div>
-        <span
-          className="text-[10px] font-bold"
-          style={{ color }}
-        >
-          {isUp ? '+' : ''}{changePct.toFixed(2)}%
-        </span>
+        <div className="text-right">
+          <div className="text-[10px] font-bold" style={{ color }}>
+            {isUp ? '+' : ''}{changePct.toFixed(2)}%
+          </div>
+          <div className="text-[9px] font-mono" style={{ color }}>
+            {isUp ? '+' : ''}{changeDollar.toFixed(2)}
+          </div>
+        </div>
       </div>
 
-      <div className="text-[15px] font-bold font-mono" style={{ color }}>
+      <div className="text-[16px] font-bold font-mono text-sim-text leading-none mb-1">
         ${price.toFixed(2)}
       </div>
 
-      {/* Sparkline */}
+      <div className="flex justify-between text-[8px] font-mono text-sim-muted mb-1">
+        <span>L {dayLow.toFixed(2)}</span>
+        <span>O {dayOpen.toFixed(2)}</span>
+        <span>H {dayHigh.toFixed(2)}</span>
+      </div>
+
       <svg
         viewBox={`0 0 ${w} ${h}`}
-        className="w-full mt-1.5"
-        style={{ height: 28 }}
+        className="w-full"
+        style={{ height: 22 }}
         preserveAspectRatio="none"
       >
         <defs>
           <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+            <stop offset="0%" stopColor={color} stopOpacity="0.2" />
             <stop offset="100%" stopColor={color} stopOpacity="0" />
           </linearGradient>
         </defs>

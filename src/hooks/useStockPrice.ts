@@ -1,26 +1,20 @@
 import { useState, useEffect } from 'react';
-import { getCurrentPrice } from '../services/marketSimulation';
+import { getCurrentPrice, getDayOpen } from '../services/marketSimulation';
 
 export function useStockPrice(symbol: string, refreshIntervalMs: number = 1000) {
   const [price, setPrice] = useState<number>(0);
-  const [previousPrice, setPreviousPrice] = useState<number>(0);
 
   useEffect(() => {
-    const updatePrice = () => {
-      const newPrice = getCurrentPrice(symbol);
-      setPreviousPrice(price);
-      setPrice(newPrice);
-    };
+    const update = () => setPrice(getCurrentPrice(symbol));
+    update();
+    const id = setInterval(update, refreshIntervalMs);
+    return () => clearInterval(id);
+  }, [symbol, refreshIntervalMs]);
 
-    updatePrice();
-
-    const interval = setInterval(updatePrice, refreshIntervalMs);
-
-    return () => clearInterval(interval);
-  }, [symbol, refreshIntervalMs, price]);
-
-  const changePercent = price > 0 && previousPrice > 0 ? ((price - previousPrice) / previousPrice) * 100 : 0;
-  const isUp = price > previousPrice;
+  // Day open is deterministic for the calendar day — no state needed
+  const dayOpen = getDayOpen(symbol);
+  const changePercent = dayOpen > 0 && price > 0 ? ((price - dayOpen) / dayOpen) * 100 : 0;
+  const isUp = price >= dayOpen;
 
   return { price, changePercent, isUp };
 }

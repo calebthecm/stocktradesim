@@ -157,36 +157,50 @@ export function getCurrentPrice(symbol: string, now: Date = new Date()): number 
   const nowMs = now.getTime();
   const dayIdx = Math.floor(nowMs / 86_400_000);
   const dayStartMs = dayIdx * 86_400_000;
-
-  // Anchor: today's opening price (GBM walk from SIM_EPOCH_DAY, at most ~90 steps)
   const dayOpen = getDailyPrice(config, dayIdx);
 
-  // Level 1 — intraday minute walk (up to 1440 steps, consistent with 1m chart seeds)
+  // Walk from midnight at 1m granularity — same anchor used by getCandleHistory sub-day.
+  const dtMin = TRADING_DAYS_PER_CANDLE[60_000] / TRADING_DAYS_PER_YEAR;
   const absMinuteIdx = Math.floor(nowMs / 60_000);
   const dayStartMinuteIdx = Math.floor(dayStartMs / 60_000);
   const minutesElapsed = absMinuteIdx - dayStartMinuteIdx;
 
-  const dtMin = TRADING_DAYS_PER_CANDLE[60_000] / TRADING_DAYS_PER_YEAR;
-  let minutePrice = dayOpen;
-  if (minutesElapsed > 0) {
-    const mp = buildPriceHistory(config, minutesElapsed + 1, dtMin, dayStartMinuteIdx, dayOpen);
-    minutePrice = mp[mp.length - 1];
-  }
+  // One pass: get current minute's open and close (for smooth intraday interpolation)
+  const mp = buildPriceHistory(config, minutesElapsed + 2, dtMin, dayStartMinuteIdx, dayOpen);
+  const minuteOpen = mp[mp.length - 2];
+  const minuteClose = mp[mp.length - 1];
 
-  // Level 2 — sub-minute second walk (up to 59 steps) for live tick feel
-  const absSecondIdx = Math.floor(nowMs / 1_000);
-  const minuteStartSecondIdx = absMinuteIdx * 60;
-  const secondsElapsed = absSecondIdx - minuteStartSecondIdx;
-
-  let livePrice = minutePrice;
-  if (secondsElapsed > 0) {
-    const dtSec = dtMin / 60; // 1 second = 1/60 of a minute
-    // Seed offset 600_000 avoids collisions with minute-level seeds
-    const sp = buildPriceHistory(config, secondsElapsed + 1, dtSec, minuteStartSecondIdx + 600_000, minutePrice);
-    livePrice = sp[sp.length - 1];
-  }
+  // Smoothstep interpolation: price moves naturally from open→close over 60 seconds
+  const secWithinMinute = Math.floor((nowMs % 60_000) / 1_000);
+  const t = secWithinMinute / 60;
+  const smooth = t * t * (3 - 2 * t);
+  const livePrice = minuteOpen + (minuteClose - minuteOpen) * smooth;
 
   return Math.round(livePrice * getActiveDriftMultiplier(symbol.toUpperCase()) * 100) / 100;
+}
+
+// Today's day-open price — deterministic anchor for day P&L calculations.
+export function getDayOpen(symbol: string, now: Date = new Date()): number {
+  const config = getStockInfo(symbol);
+  if (!config) return 0;
+  const dayIdx = Math.floor(now.getTime() / 86_400_000);
+  return Math.round(getDailyPrice(config, dayIdx) * 100) / 100;
+}
+
+// Minute-level price array from midnight to now — used for intraday sparklines.
+export function getDayIntradayPrices(symbol: string, now: Date = new Date()): number[] {
+  const config = getStockInfo(symbol);
+  if (!config) return [];
+  const nowMs = now.getTime();
+  const dayIdx = Math.floor(nowMs / 86_400_000);
+  const dayStartMs = dayIdx * 86_400_000;
+  const dayOpen = getDailyPrice(config, dayIdx);
+  const dtMin = TRADING_DAYS_PER_CANDLE[60_000] / TRADING_DAYS_PER_YEAR;
+  const absMinuteIdx = Math.floor(nowMs / 60_000);
+  const dayStartMinuteIdx = Math.floor(dayStartMs / 60_000);
+  const minutesElapsed = absMinuteIdx - dayStartMinuteIdx;
+  if (minutesElapsed <= 0) return [dayOpen];
+  return buildPriceHistory(config, minutesElapsed + 1, dtMin, dayStartMinuteIdx, dayOpen);
 }
 
 export function getCandleHistory(
@@ -219,8 +233,19 @@ export function getCandleHistory(
       windowStartPrice = walk[walk.length - 1];
     }
   } else {
+    // Sub-day: anchor at midnight of the start day, walk to window start.
+    // This makes all sub-day candles consistent with getCurrentPrice's midnight anchor.
     const startDayIdx = Math.floor(startTime.getTime() / 86_400_000);
-    windowStartPrice = getDailyPrice(config, startDayIdx);
+    const dayOpen = getDailyPrice(config, startDayIdx);
+    const dayStartMs = startDayIdx * 86_400_000;
+    const dayStartTfIdx = Math.floor(dayStartMs / timeframeMs);
+    const stepsFromMidnight = startIdx - dayStartTfIdx;
+    if (stepsFromMidnight <= 0) {
+      windowStartPrice = dayOpen;
+    } else {
+      const midWalk = buildPriceHistory(config, stepsFromMidnight + 1, dt, dayStartTfIdx, dayOpen);
+      windowStartPrice = midWalk[midWalk.length - 1];
+    }
   }
 
   // Build candles using absolute seeds so every candle at a given timestamp
